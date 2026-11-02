@@ -1,0 +1,57 @@
+name: Release Please
+
+# On every push to main, release-please keeps a release PR up to date: the next
+# version (from the Conventional Commit messages since the last release), the
+# CHANGELOG.md entry and the version in manifest.json. Merging that PR tags the
+# release and publishes it on GitHub, which is what HACS installs.
+#
+# release-please runs with a token from the repository's GitHub App rather than
+# GITHUB_TOKEN: GitHub does not start workflows for changes made with
+# GITHUB_TOKEN, so the release PR would otherwise get no Validate checks. Needs
+# the App's client ID in the RELEASE_PLEASE_CLIENT_ID variable and its private
+# key in the RELEASE_PLEASE_PRIVATE_KEY secret.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+# Actions are pinned to full commit SHAs (Dependabot bumps them along with the
+# version comment), so a moved or replaced tag cannot change what runs here.
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      # Only for attaching the zip; release-please uses the App token.
+      contents: write
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # Attach the integration as a zip, as earlier releases did.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.release.outputs.release_created }}
+      - name: Attach the integration zip to the release
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          zip -r stagg_ekg_plus.zip custom_components/stagg_ekg_plus
+          gh release upload "$TAG" stagg_ekg_plus.zip

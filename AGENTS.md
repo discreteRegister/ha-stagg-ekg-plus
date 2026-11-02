@@ -189,20 +189,27 @@ job installs `requirements_test.txt`).
 
 ## Releasing
 
-To cut a release `X.Y.Z`:
+Releases are automated with release-please
+(`.github/workflows/release-please.yml`, `release-please-config.json`,
+`.release-please-manifest.json`):
 
-1. Bump `version` in `manifest.json` to `X.Y.Z`.
-2. Add a `## X.Y.Z` section to `CHANGELOG.md` (top of the list) using the
-   established `### Fixed / Changed / Added / Internal / Notes` subsections.
-3. Commit, then tag `vX.Y.Z` and push the tag.
-
-`.github/workflows/release.yml` (on tag `v*`) verifies the tag matches the
-manifest version, extracts the matching `CHANGELOG.md` section as the release
-notes (prepending the `## What's new in X.Y.Z` heading), zips
-`custom_components/stagg_ekg_plus`, and publishes the GitHub release. The job
-**fails** if no `## X.Y.Z` section exists, so the changelog entry is required.
-For a new integration listing, update the release/action links in the
-`hacs/default` PR after the release publishes.
+- Commit messages must follow Conventional Commits. `fix:` bumps the patch
+  version, `feat:` the minor version (while below 1.0, `feat!:` / `BREAKING
+  CHANGE:` also only bumps the minor version). `feat`, `fix`, `perf`, `revert`
+  and `docs` commits appear in the changelog; `ci`, `chore`, `test`, `style`,
+  `refactor` and `build` do not.
+- On every push to `main`, release-please opens or updates a release PR that
+  bumps `version` in `manifest.json`, `.release-please-manifest.json`, and adds
+  the `CHANGELOG.md` entry. Do not edit those by hand.
+- Merging the release PR tags `vX.Y.Z`, publishes the GitHub release with the
+  changelog entry as its notes, and attaches `stagg_ekg_plus.zip`
+  (`custom_components/stagg_ekg_plus`). HACS installs from that release.
+- To force a specific version, add a `Release-As: X.Y.Z` footer to a commit
+  message.
+- release-please authenticates as the repository's GitHub App (client ID in
+  the `RELEASE_PLEASE_CLIENT_ID` variable, private key in the
+  `RELEASE_PLEASE_PRIVATE_KEY` secret), not `GITHUB_TOKEN`, so the release PR
+  gets the normal Validate checks.
 
 ## Known open items / calibration TODO
 
