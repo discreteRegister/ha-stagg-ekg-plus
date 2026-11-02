@@ -248,15 +248,18 @@ sensor.
 
 ## Development
 
-A standalone Bluetooth probe is included for protocol testing without Home Assistant:
+The development environment is managed with [uv](https://docs.astral.sh/uv/)
+(`pyproject.toml` and `uv.lock`). A standalone Bluetooth probe is included for
+protocol testing without Home Assistant:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install bleak
-.venv/bin/python tools/scan.py            # find the kettle
-.venv/bin/python tools/probe.py           # connect and print decoded state
-.venv/bin/python tools/probe.py --power on --temp 200
+uv run --locked python tools/scan.py            # find the kettle
+uv run --locked python tools/probe.py           # connect and print decoded state
+uv run --locked python tools/probe.py --power on --temp 200
 ```
+
+Tests, typing and lint run the same way; see `AGENTS.md` for the exact
+commands. CI requires 100% test coverage.
 
 The protocol codec lives in `custom_components/stagg_ekg_plus/api.py` and has no
 Home Assistant dependencies, so it can be exercised directly.
