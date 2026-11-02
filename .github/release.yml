@@ -1,0 +1,19 @@
+# Categories for GitHub's generated release notes, which release-please uses
+# for the changelog and the release (changelog-type "github" in
+# release-please-config.json): one line per merged pull request, linking it.
+changelog:
+  exclude:
+    labels:
+      # release-please's own release PRs
+      - "autorelease: pending"
+      - "autorelease: tagged"
+  categories:
+    - title: Changes
+      labels:
+        - "*"
+      exclude:
+        labels:
+          - dependencies
+    - title: Dependencies
+      labels:
+        - dependencies
