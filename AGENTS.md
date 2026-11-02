@@ -160,6 +160,10 @@ uv run --locked python -m pytest tests/test_api.py -q
 uv run --locked python -m mypy --strict custom_components/stagg_ekg_plus/
 uv run --locked python -m ruff check custom_components/ tests/ tools/
 uv run --locked python -m ruff format --check custom_components/ tests/ tools/
+
+# workflow security and syntax (only installs the "workflows" group)
+GH_TOKEN=$(gh auth token) uv run --locked --only-group workflows zizmor .
+uv run --locked --only-group workflows actionlint
 ```
 
 The standalone tools run from the same environment:
@@ -190,6 +194,11 @@ job runs `uv run --locked` against `uv.lock`).
   `AddConfigEntryEntitiesCallback`, frozen kw_only entity descriptions,
   `dr.CONNECTION_BLUETOOTH` for device connections.
 - Do not reintroduce a separate server/add-on; keep the single-integration design.
+- Workflows: pin every action to a full commit SHA with a `# vX.Y.Z` comment,
+  give each job only the `permissions` it needs (top-level `permissions: {}`),
+  check out with `persist-credentials: false`, and pass `${{ }}` values to
+  `run:` blocks through `env:` rather than inline. The "Workflow security" job
+  (zizmor + actionlint) enforces this.
 
 ## Releasing
 
