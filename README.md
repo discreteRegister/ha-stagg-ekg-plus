@@ -1,16 +1,17 @@
 # Fellow Stagg EKG+ for Home Assistant
 
-[![GitHub Release](https://img.shields.io/github/release/samwiseg0/ha-stagg-ekg-plus.svg?style=flat-square)](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/samwiseg0/ha-stagg-ekg-plus/validate.yml?branch=main&style=flat-square)](https://github.com/samwiseg0/ha-stagg-ekg-plus/actions/workflows/validate.yml)
-[![Test Coverage](https://img.shields.io/codecov/c/gh/samwiseg0/ha-stagg-ekg-plus?style=flat-square)](https://app.codecov.io/gh/samwiseg0/ha-stagg-ekg-plus/)
-[![License](https://img.shields.io/github/license/samwiseg0/ha-stagg-ekg-plus.svg?style=flat-square)](LICENSE)
-[![hacs](https://img.shields.io/badge/HACS-Default-blue.svg?style=flat-square)](https://hacs.xyz)
+[![Validate](https://github.com/discreteRegister/ha-stagg-ekg-plus/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/discreteRegister/ha-stagg-ekg-plus/actions/workflows/validate.yml)
 
 A native Home Assistant integration for the [Fellow Stagg EKG+](https://fellowproducts.com/products/stagg-ekg-plus) electric kettle. It talks to the kettle directly over Bluetooth LE using Home Assistant's built-in Bluetooth stack, so **no separate bridge, server, or Homebridge instance is required**.
 
 This is a from-scratch reimplementation of the protocol used by the
 [homebridge-stagg-ekg-plus](https://github.com/philscott-dev/homebridge-stagg-ekg-plus)
-project, available in HACS.
+project.
+
+This repository continues the integration originally written by
+[samwiseg0](https://github.com/samwiseg0/ha-stagg-ekg-plus). The integration domain is unchanged
+(`stagg_ekg_plus`), so an existing setup can switch over without being set up
+again; see [Switching from samwiseg0/ha-stagg-ekg-plus](#switching-from-samwiseg0ha-stagg-ekg-plus).
 
 ## Contents
 
@@ -20,6 +21,7 @@ project, available in HACS.
 - [Installation](#installation)
   - [HACS (recommended)](#hacs-recommended)
   - [Manual](#manual)
+  - [Switching from samwiseg0/ha-stagg-ekg-plus](#switching-from-samwiseg0ha-stagg-ekg-plus)
 - [Setup](#setup)
 - [Connection mode](#connection-mode)
   - [Background poll (on demand only)](#background-poll-on-demand-only)
@@ -68,15 +70,30 @@ project, available in HACS.
 
 ### HACS (recommended)
 
-[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=samwiseg0&repository=ha-stagg-ekg-plus&category=integration)
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=discreteRegister&repository=ha-stagg-ekg-plus&category=integration)
 
-1. Click the button above, or search for **Fellow Stagg EKG+** in HACS.
+This repository is not in the HACS default list yet, so add it as a custom
+repository first:
+
+1. Click the button above, or in HACS open the three-dot menu -> **Custom
+   repositories**, enter `https://github.com/discreteRegister/ha-stagg-ekg-plus`
+   and choose the **Integration** type.
 2. Install **Fellow Stagg EKG+**.
 3. Restart Home Assistant.
 
 ### Manual
 
 Copy `custom_components/stagg_ekg_plus` into your Home Assistant `config/custom_components/` directory and restart.
+
+### Switching from samwiseg0/ha-stagg-ekg-plus
+
+Both use the same integration domain and files, so only one can be installed,
+and the existing config entry, devices, and entity IDs carry over unchanged:
+
+1. In HACS, open **Fellow Stagg EKG+** (samwiseg0) and choose **Remove**. Do
+   not delete the integration under Settings -> Devices & Services.
+2. Add this repository as a custom repository and install it, as above.
+3. Restart Home Assistant.
 
 ## Setup
 
@@ -174,7 +191,7 @@ An automation blueprint that shows an iOS **Live Activity** for the kettle: the
 current temperature while it heats, a "Ready" alert when it reaches the target,
 and it clears when the kettle turns off.
 
-[![Open your Home Assistant instance and show the blueprint import dialog with this blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fsamwiseg0%2Fha-stagg-ekg-plus%2Fblob%2Fmain%2Fblueprints%2Fstagg_ekg_live_activity.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with this blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FdiscreteRegister%2Fha-stagg-ekg-plus%2Fblob%2Fmain%2Fblueprints%2Fstagg_ekg_live_activity.yaml)
 
 **Requirements:** Home Assistant 2026.3 or newer (same as the integration), the
 Home Assistant Companion app on iOS (Live Activities need iOS 16.1 or newer), and
@@ -254,13 +271,15 @@ change (`state ...`).
 
 ## AI disclosure
 
-This integration was developed with the help of AI coding tools. I am not a
-programmer by trade. Every change is reviewed by a human (me) before it is
-committed, and the integration has been tested against a real Fellow Stagg EKG+
-kettle. Issues and pull requests are welcome if you spot something that can be
-improved.
+This integration was developed with the help of AI coding tools, both
+originally by samwiseg0 and in this repository. Every change is reviewed by a
+human before it is merged, and the integration is tested against a real Fellow
+Stagg EKG+ kettle. Issues and pull requests are welcome if you spot something
+that can be improved.
 
 ## Credits
+
+Originally written by [samwiseg0](https://github.com/samwiseg0/ha-stagg-ekg-plus).
 
 Protocol reverse engineering by
 [philscott-dev](https://github.com/philscott-dev/homebridge-stagg-ekg-plus-server),
