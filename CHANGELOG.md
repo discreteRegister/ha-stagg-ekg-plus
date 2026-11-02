@@ -1,10 +1,11 @@
 # Changelog
 
 All notable changes to the Fellow Stagg EKG+ integration are documented here.
-Before tagging a release, add a `## <version>` section (matching the version in
-`manifest.json`); the release workflow publishes that section verbatim as the
-GitHub release notes. Older releases predate this file - see the
-[releases page](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases).
+New entries are written by [release-please](https://github.com/googleapis/release-please)
+from the Conventional Commit messages (`feat:`, `fix:`, `docs:`, ...) merged
+since the previous release. Do not edit the version in `manifest.json` by hand;
+merging the release PR bumps it, tags the release and publishes it. Releases up
+to 0.7.7 were made in [samwiseg0/ha-stagg-ekg-plus](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases).
 
 ## 0.7.7
 
