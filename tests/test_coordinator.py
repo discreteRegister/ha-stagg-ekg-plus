@@ -217,9 +217,11 @@ def test_identical_frames_keep_persistent_link_alive(hass: HomeAssistant) -> Non
     ):
         # An idle kettle repeats the same state frame about once a second; each
         # one must rearm the watchdog even though the state never changes.
+        # Each frame is complete once the next frame's header arrives.
         for _ in range(3):
-            client._handle_notify(None, bytearray.fromhex("efdd00000000"))
-            client._handle_notify(None, bytearray(FRAME_SEPARATOR))
+            client._handle_notify(None, bytearray.fromhex("efdd00"))
+            client._handle_notify(None, bytearray.fromhex("000000"))
+        client._handle_notify(None, bytearray(FRAME_SEPARATOR) + b"\x01")
     assert call_later.call_count == 3
     assert updated.call_count <= 1
 
