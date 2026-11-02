@@ -19,15 +19,20 @@ on:
 
 permissions: {}
 
+# One run at a time, in push order; a release in progress is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 # Actions are pinned to full commit SHAs (Dependabot bumps them along with the
 # version comment), so a moved or replaced tag cannot change what runs here.
 
 jobs:
   release-please:
+    name: Release Please
     runs-on: ubuntu-latest
     permissions:
-      # Only for attaching the zip; release-please uses the App token.
-      contents: write
+      contents: write # attach the zip to the release; release-please uses the App token
     steps:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
@@ -47,6 +52,8 @@ jobs:
       # Attach the integration as a zip, as earlier releases did.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ steps.release.outputs.release_created }}
+        with:
+          persist-credentials: false
       - name: Attach the integration zip to the release
         if: ${{ steps.release.outputs.release_created }}
         env:

@@ -12,6 +12,12 @@ on:
 
 permissions: {}
 
+# A new push to a pull request cancels its previous, now outdated run. Runs on
+# main, merge groups and schedules each get their own group and always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Actions are pinned to full commit SHAs (Dependabot bumps them along with the
 # version comment), so a moved or replaced tag cannot change what runs here.
 # hacs/action and the hassfest action publish no maintained releases, so they
@@ -28,6 +34,8 @@ jobs:
     name: HACS Validation
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: HACS Action
         uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
@@ -38,6 +46,8 @@ jobs:
     name: Hassfest Validation
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361 # master
 
   tests:
@@ -45,6 +55,8 @@ jobs:
     name: Unit tests
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -59,6 +71,8 @@ jobs:
     name: Strict typing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -71,6 +85,8 @@ jobs:
     name: Lint (ruff)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -80,6 +96,31 @@ jobs:
       - name: Run ruff format --check
         run: >-
           uv run --locked python -m ruff format --check custom_components/ tests/ tools/
+
+  # Lints .github/ itself. zizmor audits the workflows and dependabot.yml for
+  # security problems (template injection, excessive permissions, persisted
+  # credentials, unpinned or known-vulnerable actions, ...); its online audits
+  # use the read-only GITHUB_TOKEN to resolve action refs and advisories.
+  # actionlint checks workflow syntax and expressions and runs shellcheck on
+  # every run: block. Both are locked in uv.lock (the "workflows" group).
+  workflow-security:
+    runs-on: ubuntu-latest
+    name: Workflow security
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Run zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          uv run --locked --only-group workflows zizmor --format=github .
+      - name: Run actionlint
+        run: >-
+          uv run --locked --only-group workflows actionlint
 
   # The only check the main branch ruleset requires. It passes only when every
   # job above passed, so a new job just has to be added to `needs` here, not to
@@ -94,6 +135,7 @@ jobs:
       - tests
       - typing
       - lint
+      - workflow-security
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job passed
@@ -101,8 +143,10 @@ jobs:
           contains(needs.*.result, 'failure')
           || contains(needs.*.result, 'cancelled')
           || contains(needs.*.result, 'skipped')
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo "Job results: ${{ toJSON(needs.*.result) }}"
+          echo "Job results: $RESULTS"
           exit 1
       - name: All jobs passed
         run: echo "All CI jobs passed."

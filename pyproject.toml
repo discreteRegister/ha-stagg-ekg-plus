@@ -47,6 +47,14 @@ dev = [
     "pyudev",
     "aioesphomeapi>=46",
 ]
+# Linters for .github/ (the "Workflow security" CI job). Not installed by a
+# plain `uv sync`/`uv run`; use `uv run --only-group workflows ...`.
+workflows = [
+    # Security audit of the workflows and dependabot.yml.
+    "zizmor",
+    # actionlint (syntax, expressions, shellcheck of run: blocks) as a wheel.
+    "actionlint-py",
+]
 
 [tool.uv]
 package = false
