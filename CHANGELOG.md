@@ -8,6 +8,28 @@ then. Do not edit the version in `manifest.json` by hand;
 merging the release PR bumps it, tags the release and publishes it. Releases up
 to 0.7.7 were made in [samwiseg0/ha-stagg-ekg-plus](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases).
 
+## 0.8.0 (2026-11-02)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Changes
+* docs: point the README and manifest at discreteRegister/ha-stagg-ekg-plus by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/3
+* fix: keep an idle persistent link alive and report its availability by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/1
+* ci: lock the dev environment with uv and require 100% coverage by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/7
+* ci: automate releases with release-please by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/8
+* ci: run on the merge queue and gate merges on a single CI passed check by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/11
+* fix: ignore state frames spliced together by a lost notification by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/2
+* ci: build the changelog from merged pull requests by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/12
+### Dependencies
+* ci: bump home-assistant/actions/hassfest from cd6f3635a740c84d8a14f6121a90068b8ece6bf6 to 86d4564712fa02543c808e3a693dd04f9d3f8361 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/10
+
+## New Contributors
+* @digitalresistor made their first contribution in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/3
+* @dependabot[bot] made their first contribution in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/10
+
+**Full Changelog**: https://github.com/discreteRegister/ha-stagg-ekg-plus/compare/v0.7.7...v0.8.0
+
 ## 0.7.7
 
 Now available directly in HACS.
