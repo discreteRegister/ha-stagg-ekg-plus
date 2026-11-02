@@ -197,11 +197,15 @@ Releases are automated with release-please
 (`.github/workflows/release-please.yml`, `release-please-config.json`,
 `.release-please-manifest.json`):
 
-- Commit messages must follow Conventional Commits. `fix:` bumps the patch
-  version, `feat:` the minor version (while below 1.0, `feat!:` / `BREAKING
-  CHANGE:` also only bumps the minor version). `feat`, `fix`, `perf`, `revert`
-  and `docs` commits appear in the changelog; `ci`, `chore`, `test`, `style`,
-  `refactor` and `build` do not.
+- Commit messages must follow Conventional Commits; they decide the version.
+  `fix:` bumps the patch version, `feat:` the minor version (while below 1.0,
+  `feat!:` / `BREAKING CHANGE:` also only bumps the minor version).
+- The changelog lists merged pull requests, not commits: release-please uses
+  GitHub's generated release notes (`changelog-type: github`, categories in
+  `.github/release.yml`). Each PR appears once, by its title, with a link, so
+  PR titles should read as changelog lines (Conventional Commit style too).
+  Dependabot PRs (label `dependencies`) are listed under Dependencies;
+  release-please's own release PRs are left out.
 - On every push to `main`, release-please opens or updates a release PR that
   bumps `version` in `manifest.json`, `.release-please-manifest.json`, and adds
   the `CHANGELOG.md` entry. Do not edit those by hand.
