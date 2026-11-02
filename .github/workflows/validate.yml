@@ -3,6 +3,9 @@ name: Validate
 on:
   push:
   pull_request:
+  # The merge queue on main tests each PR merged onto the latest main before it
+  # lands, and waits for the required "CI passed" check on that merge group.
+  merge_group:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
@@ -77,3 +80,29 @@ jobs:
       - name: Run ruff format --check
         run: >-
           uv run --locked python -m ruff format --check custom_components/ tests/ tools/
+
+  # The only check the main branch ruleset requires. It passes only when every
+  # job above passed, so a new job just has to be added to `needs` here, not to
+  # the ruleset. `if: always()` makes it run (and fail) when a job failed; a
+  # skipped required check would otherwise count as passing.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs:
+      - validate-hacs
+      - validate-hassfest
+      - tests
+      - typing
+      - lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every job passed
+        if: >-
+          contains(needs.*.result, 'failure')
+          || contains(needs.*.result, 'cancelled')
+          || contains(needs.*.result, 'skipped')
+        run: |
+          echo "Job results: ${{ toJSON(needs.*.result) }}"
+          exit 1
+      - name: All jobs passed
+        run: echo "All CI jobs passed."
