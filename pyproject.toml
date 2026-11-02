@@ -68,6 +68,10 @@ environments = [
 # freshly published (or compromised) release is never pulled in. Dependabot's
 # cooldown in .github/dependabot.yml matches it.
 exclude-newer = "2 weeks"
+# To take a security fix sooner (Dependabot security updates ignore the
+# cooldown, but uv still applies exclude-newer), allow that one package, and
+# drop the override again once the fix is two weeks old:
+# exclude-newer-package = { pillow = "1 day" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
