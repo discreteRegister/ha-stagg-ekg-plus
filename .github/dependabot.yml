@@ -1,14 +1,22 @@
 version: 2
 updates:
+  # Workflows pin actions to full commit SHAs with a "# vX.Y.Z" comment;
+  # Dependabot keeps that format and updates both.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "ci"
-  - package-ecosystem: pip
+  # pyproject.toml + uv.lock. The cooldown matches exclude-newer in
+  # pyproject.toml: only versions out for at least two weeks are proposed.
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "ci"

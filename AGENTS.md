@@ -143,29 +143,33 @@ tools/probe.py       # standalone connect/auth/notify decoder (calibration)
 
 ## Build / test commands
 
-This repo has no Home Assistant in the local venv, so validation is limited to
-syntax + the pure protocol logic.
+The development environment is defined in `pyproject.toml` and locked in
+`uv.lock`; uv only resolves releases at least two weeks old (`exclude-newer`).
+CI runs everything through [uv](https://docs.astral.sh/uv/) with `--locked` and
+requires 100% test coverage (`fail_under` in `pyproject.toml`). The same
+commands work locally (Linux or an Apple silicon Mac):
 
 ```bash
-# one-time
-python3 -m venv .venv && .venv/bin/pip install bleak pytest
+# full suite with coverage, as CI runs it (fails below 100%)
+uv run --locked python -m pytest tests/ -q --cov=custom_components/stagg_ekg_plus --cov-report=term-missing
 
-# syntax check everything
-.venv/bin/python -m py_compile custom_components/stagg_ekg_plus/*.py tools/*.py
+# just the pure protocol codec tests
+uv run --locked python -m pytest tests/test_api.py -q
 
-# unit tests (pure protocol codec; no Home Assistant needed)
-.venv/bin/python -m pytest tests/test_api.py -q
+# typing and lint, as CI runs them
+uv run --locked python -m mypy --strict custom_components/stagg_ekg_plus/
+uv run --locked python -m ruff check custom_components/ tests/ tools/
+uv run --locked python -m ruff format --check custom_components/ tests/ tools/
+```
 
-# full suite incl. HA config/options flow tests (heavier; pulls in HA + the
-# bluetooth/usb component deps via pytest-homeassistant-custom-component)
-.venv/bin/pip install -r requirements_test.txt
-.venv/bin/python -m pytest tests/ -q
+The standalone tools run from the same environment:
 
+```bash
 # find the kettle (Linux shows MAC; macOS shows a per-host UUID)
-.venv/bin/python tools/scan.py
+uv run --locked python tools/scan.py
 
 # read-only decode (calibration); add --power on/off --temp N to write
-.venv/bin/python tools/probe.py --duration 25
+uv run --locked python tools/probe.py --duration 25
 ```
 
 When changing `api.py`, run `tests/test_api.py` (build_*_command must reproduce
@@ -174,8 +178,8 @@ tests load `api.py` standalone by path, so they run without Home Assistant.
 `tests/test_config_flow.py` covers the config + options flows via
 pytest-homeassistant-custom-component; `tests/conftest.py` stubs the bluetooth
 manager's D-Bus system-history load so the `bluetooth` dependency sets up in CI/
-on macOS. CI runs everything via `.github/workflows/validate.yml` (the `tests`
-job installs `requirements_test.txt`).
+on macOS. CI runs everything via `.github/workflows/validate.yml` (each Python
+job runs `uv run --locked` against `uv.lock`).
 
 ## Conventions
 

@@ -1,0 +1,74 @@
+# Development environment for the Fellow Stagg EKG+ integration.
+#
+# This is not an installable package: Home Assistant loads the integration from
+# custom_components/stagg_ekg_plus, and its runtime requirements live in
+# manifest.json (there are none beyond Home Assistant's own Bluetooth stack).
+# This file only defines the tools and test dependencies, locked in uv.lock.
+
+[project]
+name = "ha-stagg-ekg-plus"
+# Placeholder: the integration's version is in manifest.json (bumped by
+# release-please). Keeping it out of here means a release never changes uv.lock.
+version = "0.0.0"
+description = "Home Assistant integration for the Fellow Stagg EKG+ kettle over Bluetooth LE"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+# Follows Home Assistant core's requires-python, which the locked
+# pytest-homeassistant-custom-component installs; raise it in step with that
+# (and PYTHON_VERSION in .github/workflows/validate.yml).
+requires-python = ">=3.14.2,<3.15"
+dependencies = []
+
+[dependency-groups]
+# uv.lock pins the exact versions. The lower bound on
+# pytest-homeassistant-custom-component (which pins Home Assistant core) keeps
+# the resolver from backtracking to ancient releases.
+dev = [
+    # Pulls in Home Assistant core and the Bluetooth stack for the
+    # HA-dependent tests; the exact versions are pinned by uv.lock.
+    "pytest-homeassistant-custom-component>=0.13.373",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+    # The pure protocol codec (api.py) and tools/ need bleak.
+    "bleak",
+    "bleak-retry-connector",
+    # Third-party requirements of the `bluetooth` and `usb` components the
+    # integration transitively loads; the test harness does not install them.
+    # If Home Assistant changes those components' requirements, update these.
+    "habluetooth",
+    "bluetooth-adapters",
+    "bluetooth-auto-recovery",
+    "bluetooth-data-tools",
+    "aiousbwatcher",
+    "usb-devices",
+    "serialx",
+    "pyserial",
+    "pyudev",
+    "aioesphomeapi>=46",
+]
+
+[tool.uv]
+package = false
+# Lock only for Linux (CI) and Apple silicon Macs. On Intel Macs aioesphomeapi
+# caps cryptography below the version Home Assistant pins, so no lock exists.
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# Only resolve releases that have been public for at least two weeks, so a
+# freshly published (or compromised) release is never pulled in. Dependabot's
+# cooldown in .github/dependabot.yml matches it.
+exclude-newer = "2 weeks"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components/stagg_ekg_plus"]
+
+[tool.coverage.report]
+# CI fails below this; `pytest --cov` enforces it locally too.
+fail_under = 100
+show_missing = true
+skip_covered = true
