@@ -72,6 +72,15 @@ exclude-newer = "2 weeks"
 # cooldown, but uv still applies exclude-newer), allow that one package, and
 # drop the override again once the fix is two weeks old:
 # exclude-newer-package = { pillow = "1 day" }
+#
+# uv: Home Assistant 2026.10.2 pins uv==0.12.23, whose bundled CA store trusts
+# a compromised emSign root (GHSA-hq85-5cpj-mr62, fixed in 0.13.4). uv is only
+# Home Assistant's package installer; the tests never call it. Remove the
+# override once pytest-homeassistant-custom-component locks a Home Assistant
+# that pins a fixed uv (2026.10.3+ pins 0.13.5), and the exclude-newer-package
+# entry once 0.13.4 (2026-10-20) is two weeks old.
+override-dependencies = ["uv>=0.13.4"]
+exclude-newer-package = { uv = "2026-10-21T00:00:00Z" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
