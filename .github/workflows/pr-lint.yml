@@ -1,0 +1,95 @@
+name: Lint pull request
+
+# release-please decides each release's version from the Conventional Commit
+# messages on main, and the changelog lists merged pull requests by title. Both
+# have to follow Conventional Commits, so check them before a PR can merge.
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+  # Required by the main branch ruleset, so it also has to report on the merge
+  # queue's merge groups; the title and commits were already checked on the PR.
+  merge_group:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Types that reach the changelog and make release-please cut a release
+  # (feat: minor, fix/perf/revert/deps: patch).
+  RELEASING: "feat|fix|perf|revert|deps"
+  # Types release-please leaves out; on their own they do not cause a release.
+  SILENT: "docs|style|refactor|test|build|ci|chore"
+
+jobs:
+  validate:
+    name: Validate pull request
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read # list the PR's commits
+    steps:
+      - name: Check the PR title
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # 'release' is reserved for release-please's own PR.
+          scope='\([a-zA-Z0-9_/.-]+\)'
+          format="^($RELEASING|$SILENT|release)($scope)?!?: .+$"
+
+          echo "Validating PR title: $PR_TITLE"
+          if [[ ! "$PR_TITLE" =~ $format ]]; then
+            echo "::error title=PR title::PR title must follow Conventional Commits: <type>(<scope>): <description>"
+            echo "Types that release: $RELEASING"
+            echo "Types that do not:  $SILENT"
+            echo "Example: fix(api): ignore frames spliced by a lost notification"
+            exit 1
+          fi
+          echo "PR title OK"
+
+      - name: Check the commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Every commit lands on main as is (merge commits, not squash), and
+          # release-please reads each one. Merge commits (such as "Update
+          # branch") are skipped.
+          scope='\([a-zA-Z0-9_/.-]+\)'
+          format="^($RELEASING|$SILENT)($scope)?!?: .+$"
+
+          bad=0
+          while IFS=$'\t' read -r sha parents subject; do
+            if [[ "$parents" -gt 1 ]]; then
+              continue
+            fi
+            if [[ "$subject" =~ $format ]]; then
+              echo "ok   ${sha:0:12} $subject"
+            else
+              echo "::error title=Commit ${sha:0:12}::Commit message must follow Conventional Commits: $subject"
+              bad=1
+            fi
+          done < <(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
+            --jq '.[] | [.sha, (.parents | length), (.commit.message | split("\n")[0])] | @tsv')
+
+          if [[ "$bad" -ne 0 ]]; then
+            echo "Types that release: $RELEASING"
+            echo "Types that do not:  $SILENT"
+            echo "Reword the commits (git rebase -i) and force-push."
+            exit 1
+          fi
+
+      - name: Merge group
+        if: github.event_name == 'merge_group'
+        run: echo "Checked on the pull request."

@@ -209,8 +209,10 @@ Releases are automated with release-please
 - Commit messages must follow Conventional Commits; they decide the version.
   `fix:` bumps the patch version, `feat:` the minor version (while below 1.0,
   `feat!:` / `BREAKING CHANGE:` also only bumps the minor version). The
-  "Validate pull request" job in `validate.yml` (part of "CI passed") checks
-  the PR title and every non-merge commit in the PR.
+  "Validate pull request" job (`.github/workflows/pr-lint.yml`, a required
+  check of its own) checks the PR title and every non-merge commit in the PR.
+  It is kept out of Validate so editing a PR re-runs only this check, not the
+  test suite.
 - The changelog lists merged pull requests, not commits: release-please uses
   GitHub's generated release notes (`changelog-type: github`, categories in
   `.github/release.yml`). Each PR appears once, by its title, with a link, so

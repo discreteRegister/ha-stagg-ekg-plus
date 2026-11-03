@@ -3,13 +3,6 @@ name: Validate
 on:
   push:
   pull_request:
-    # "edited" re-runs CI when the title (or description) changes, so the
-    # "Validate pull request" job sees the new title.
-    types:
-      - opened
-      - edited
-      - synchronize
-      - reopened
   # The merge queue on main tests each PR merged onto the latest main before it
   # lands, and waits for the required "CI passed" check on that merge group.
   merge_group:
@@ -129,77 +122,6 @@ jobs:
         run: >-
           uv run --locked --only-group workflows actionlint
 
-  # release-please decides each release's version from the Conventional Commit
-  # messages that land on main (merge commits, not squash, so every commit
-  # counts), and the changelog lists merged pull requests by title. Only does
-  # anything on pull_request events; on other events it passes.
-  pr-lint:
-    runs-on: ubuntu-latest
-    name: Validate pull request
-    permissions:
-      pull-requests: read # list the PR's commits
-    env:
-      # Types that reach the changelog and make release-please cut a release
-      # (feat: minor, fix/perf/revert/deps: patch).
-      RELEASING: "feat|fix|perf|revert|deps"
-      # Types release-please leaves out; on their own they do not cause a release.
-      SILENT: "docs|style|refactor|test|build|ci|chore"
-    steps:
-      - name: Check the PR title
-        if: github.event_name == 'pull_request'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          # 'release' is reserved for release-please's own PR.
-          scope='\([a-zA-Z0-9_/.-]+\)'
-          format="^($RELEASING|$SILENT|release)($scope)?!?: .+$"
-
-          echo "Validating PR title: $PR_TITLE"
-          if [[ ! "$PR_TITLE" =~ $format ]]; then
-            echo "::error title=PR title::PR title must follow Conventional Commits: <type>(<scope>): <description>"
-            echo "Types that release: $RELEASING"
-            echo "Types that do not:  $SILENT"
-            echo "Example: fix(api): ignore frames spliced by a lost notification"
-            exit 1
-          fi
-          echo "PR title OK"
-
-      - name: Check the commit messages
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          # Merge commits (such as "Update branch") are skipped.
-          scope='\([a-zA-Z0-9_/.-]+\)'
-          format="^($RELEASING|$SILENT)($scope)?!?: .+$"
-
-          bad=0
-          while IFS=$'\t' read -r sha parents subject; do
-            if [[ "$parents" -gt 1 ]]; then
-              continue
-            fi
-            if [[ "$subject" =~ $format ]]; then
-              echo "ok   ${sha:0:12} $subject"
-            else
-              echo "::error title=Commit ${sha:0:12}::Commit message must follow Conventional Commits: $subject"
-              bad=1
-            fi
-          done < <(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
-            --jq '.[] | [.sha, (.parents | length), (.commit.message | split("\n")[0])] | @tsv')
-
-          if [[ "$bad" -ne 0 ]]; then
-            echo "Types that release: $RELEASING"
-            echo "Types that do not:  $SILENT"
-            echo "Reword the commits (git rebase -i) and force-push."
-            exit 1
-          fi
-
-      - name: Not a pull request
-        if: github.event_name != 'pull_request'
-        run: echo "Only pull requests are checked."
-
   # The only check the main branch ruleset requires. It passes only when every
   # job above passed, so a new job just has to be added to `needs` here, not to
   # the ruleset. `if: always()` makes it run (and fail) when a job failed; a
@@ -214,7 +136,6 @@ jobs:
       - typing
       - lint
       - workflow-security
-      - pr-lint
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every job passed
