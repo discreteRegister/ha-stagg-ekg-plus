@@ -89,9 +89,7 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
             config_entry=entry,
         )
         self.address = address
-        self._client = StaggClient(
-            on_state=self._handle_state, on_frame=self._handle_frame
-        )
+        self._client = StaggClient(on_state=self._handle_state)
         self._connect_lock = asyncio.Lock()
         self._stopping = False
         self._reconnect_attempt = 0
@@ -143,14 +141,9 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
                     else ON_DEMAND_DISCONNECT_DELAY
                 )
                 self._schedule_idle_disconnect(reset=False, delay=delay)
-
-    @callback
-    def _handle_frame(self) -> None:
-        # Every frame proves the link is alive, including the identical state
-        # the kettle repeats about once a second while idle; restart the
-        # watchdog. Resetting only on a state change would drop a healthy idle
-        # link every KEEP_ALIVE_TIMEOUT seconds.
-        self._reset_keepalive()
+        # A no-op while the watchdog is pending. In on-demand mode this is what
+        # starts it: the link is only wanted once the kettle reports power on.
+        self._arm_keepalive()
 
     @property
     def is_connected(self) -> bool:
@@ -300,17 +293,24 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
         self._schedule_reconnect()
 
     @callback
-    def _reset_keepalive(self) -> None:
-        """(Re)arm the keep-alive watchdog while we want an open link."""
-        self._cancel_keepalive_timer()
+    def _arm_keepalive(self, delay: float = KEEP_ALIVE_TIMEOUT) -> None:
+        """Arm the keep-alive watchdog unless it is already pending.
+
+        The watchdog is never rearmed from the data path. As with the scanner
+        watchdog in habluetooth, each notification only records a monotonic
+        timestamp (`StaggClient.last_rx`); the timer compares it when it
+        fires. The ~9 frames the kettle streams every second therefore cost a
+        float store each, not a cancelled and recreated timer.
+        """
         if (
-            self._stopping
+            self._cancel_keepalive is not None
+            or self._stopping
             or not self._client.is_connected
             or not self._wants_connection()
         ):
             return
         self._cancel_keepalive = async_call_later(
-            self.hass, KEEP_ALIVE_TIMEOUT, self._keepalive_timer_fired
+            self.hass, delay, self._keepalive_timer_fired
         )
 
     @callback
@@ -327,6 +327,14 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
             or not self._client.is_connected
             or not self._wants_connection()
         ):
+            return
+        silent = time.monotonic() - self._client.last_rx
+        if silent < KEEP_ALIVE_TIMEOUT:
+            # Data arrived since the watchdog was armed. Check again at the
+            # moment the link would have been silent for the full timeout, so
+            # a dead link is still noticed exactly KEEP_ALIVE_TIMEOUT after
+            # its last byte.
+            self._arm_keepalive(KEEP_ALIVE_TIMEOUT - silent)
             return
         _LOGGER.info(
             "No data from kettle %s in %ss; forcing a reconnect",
@@ -563,7 +571,7 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
                     )
                 )
             else:
-                self._reset_keepalive()
+                self._arm_keepalive()
             # The kettle's state is often unchanged across a reconnect, so no
             # state update would follow; tell the entities the link is back.
             self.async_update_listeners()

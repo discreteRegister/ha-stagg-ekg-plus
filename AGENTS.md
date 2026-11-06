@@ -62,11 +62,18 @@ tools/probe.py       # standalone connect/auth/notify decoder (calibration)
   connection-holding behavior (advertisement auto-connect, backoff reconnect,
   keep-alive). Persistent: always True. On-demand: True only while
   `self.data.power` (kettle on).
-- **Keep-alive watchdog** (`KEEP_ALIVE_TIMEOUT`, 20s): every notification rearms
-  it via `_reset_keepalive`; if it fires the link is treated as stale
-  (`_stale_disconnect = True`) and dropped (`_client.disconnect()`), which routes
-  through `_on_disconnect` -> `_schedule_reconnect`. Runs whenever
-  `_wants_connection()` and connected.
+- **Keep-alive watchdog** (`KEEP_ALIVE_TIMEOUT`, 20s): a deadline timer that is
+  never rearmed from the data path (the pattern of habluetooth's scanner
+  watchdog). Every notification only stamps `StaggClient.last_rx`
+  (`time.monotonic()`, reset by `start()`); `_arm_keepalive` arms the timer
+  once (no-op while pending; called from `_handle_state`, which is what starts
+  it in on-demand mode, and from `_ensure_connected` in persistent mode). When
+  it fires with `last_rx` inside the window it rearms for the remaining time,
+  so at most one timer per 20s exists however busy the kettle is and a dead
+  link is still noticed exactly 20s after its last byte. Otherwise the link is
+  treated as stale (`_stale_disconnect = True`) and dropped
+  (`_client.disconnect()`), which routes through `_on_disconnect` ->
+  `_schedule_reconnect`. Runs whenever `_wants_connection()` and connected.
 - **On-demand idle disconnect** (`ON_DEMAND_DISCONNECT_DELAY`, 10s): when the
   kettle reports power off, `_schedule_idle_disconnect(reset=False)` arms a
   one-shot timer (reset=False so the kettle's periodic off-state frames do not

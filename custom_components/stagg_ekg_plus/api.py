@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -294,14 +295,16 @@ class StaggClient:
         self,
         device: BLEDevice | str | None = None,
         on_state: Callable[[KettleState], None] | None = None,
-        on_frame: Callable[[], None] | None = None,
     ) -> None:
         self._device = device
         self._on_state = on_state
-        self._on_frame = on_frame
         self._client: BleakClient | None = None
         self._buffer = bytearray()
         self._seq = 0
+        # time.monotonic() of the last notification (any bytes, not only a
+        # complete frame), for the coordinator's keep-alive watchdog. Reset by
+        # start() so a new session gets a full window from the moment it opens.
+        self.last_rx = 0.0
         self._write_lock = asyncio.Lock()
         self.state = KettleState()
 
@@ -332,6 +335,7 @@ class StaggClient:
         self._client = client
         self._buffer.clear()
         self._seq = 0
+        self.last_rx = time.monotonic()
         try:
             async with asyncio.timeout(_START_TIMEOUT):
                 await client.start_notify(CHAR_UUID, self._handle_notify)
@@ -397,9 +401,9 @@ class StaggClient:
         # live from within Home Assistant (enable debug logging on the
         # integration). Useful for decoding still-unknown bytes.
         _LOGGER.debug("rx %s", data.hex())
+        self.last_rx = time.monotonic()
         self._buffer.extend(data)
         changed = False
-        received = False
         frames = parse_frames(self._buffer)
         # A frame is checked against the one after it, so the last one waits
         # until the type of the next frame has arrived.
@@ -408,7 +412,6 @@ class StaggClient:
             self._buffer[:0] = FRAME_SEPARATOR + bytes([frame_type]) + payload
         for i, (frame_type, payload) in enumerate(frames):
             _LOGGER.debug("frame 0x%02x %s", frame_type, payload.hex())
-            received = True
             next_type = (
                 frames[i + 1][0]
                 if i + 1 < len(frames)
@@ -439,8 +442,3 @@ class StaggClient:
             _LOGGER.debug("state %s", self.state)
             if self._on_state is not None:
                 self._on_state(self.state)
-        # The kettle repeats its full state about once a second even when
-        # nothing changes, so any complete frame proves the link is alive;
-        # `on_state` above only fires on a change.
-        if received and self._on_frame is not None:
-            self._on_frame()

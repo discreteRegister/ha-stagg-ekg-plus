@@ -26,6 +26,7 @@ import asyncio
 import dataclasses
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -412,28 +413,27 @@ def test_handle_notify_decodes_fragmented_frames():
     assert seen and seen[-1].power is True
 
 
-def test_handle_notify_reports_every_frame_but_only_changed_state():
+def test_handle_notify_records_last_rx_but_only_changed_state():
     states: list = []
-    frames: list = []
-    client = api.StaggClient(
-        on_state=states.append, on_frame=lambda: frames.append(None)
-    )
+    client = api.StaggClient(on_state=states.append)
+    assert client.last_rx == 0.0
     # An idle kettle repeats the same state frame about once a second.
     _notify(client, IDLE_CYCLE_93C)
     first = len(states)
+    before = time.monotonic()
     _notify(client, IDLE_CYCLE_93C, cycles=2)
     # Only the first cycle's last frame (applied once the next header arrives)
-    # adds a state after the first cycle.
+    # adds a state after the first cycle...
     assert len(states) == first + 1
-    # Every frame but the last, which waits for the next frame's header.
-    assert len(frames) == 3 * len(IDLE_CYCLE_93C) - 1
+    # ...but every notification proves the link is alive.
+    assert before <= client.last_rx <= time.monotonic()
 
 
-def test_handle_notify_no_frame_callback_without_complete_frame():
-    frames: list = []
-    client = api.StaggClient(on_frame=lambda: frames.append(None))
+def test_handle_notify_records_last_rx_without_complete_frame():
+    client = api.StaggClient()
+    before = time.monotonic()
     client._handle_notify(None, bytearray.fromhex("efdd00"))
-    assert frames == []
+    assert before <= client.last_rx <= time.monotonic()
 
 
 def test_handle_notify_buffer_is_bounded_on_garbage():
@@ -489,12 +489,16 @@ async def test_client_start_subscribes_and_authenticates():
     from unittest.mock import AsyncMock
 
     client = api.StaggClient()
+    client.last_rx = -1.0  # a previous session's timestamp
     fake = AsyncMock()
     fake.is_connected = True
+    before = time.monotonic()
     await client.start(fake)
     fake.start_notify.assert_awaited_once()
     fake.write_gatt_char.assert_awaited()  # the auth/init write
     assert client.is_connected
+    # The watchdog window of a new session starts when it opens.
+    assert before <= client.last_rx <= time.monotonic()
 
 
 async def test_client_start_cleans_up_on_failure():
