@@ -295,30 +295,25 @@ def _notify(client, cycle, cycles=1, drop=()):
             client._handle_notify(None, bytearray(data))
 
 
-def _index(cycle, frame_type, payload=False, cycle_no=1):
-    """Notification index of a frame's header (or payload) in the given cycle."""
+def _index(cycle, frame_type, payload=False):
+    """Notification index of a frame's header (or payload) within one cycle."""
     pos = [t for t, _ in cycle].index(frame_type)
-    return (cycle_no * len(cycle) + pos) * 2 + int(payload)
+    return pos * 2 + int(payload)
 
 
 def _decoded(drop):
-    """States decoded after a first, intact cycle, with the given notifications lost.
+    """States seen and the final state with the given notifications lost.
 
-    Indexes in `drop` count from the start of the first cycle; the first cycle
-    only fills in the state, so aim them at the second (see _index).
+    Two intact cycles fill in the state first. Indexes in `drop` count from the
+    start of the cycle that follows (see _index); one more intact cycle then
+    closes it.
     """
     seen: list = []
     client = api.StaggClient(on_state=seen.append)
-    first = len(IDLE_CYCLE_93C) * 2
-    for i, data in enumerate(_notifications(IDLE_CYCLE_93C, cycles=3)):
-        if i == first:
-            # The first cycle's last frame is applied by the next header.
-            client._handle_notify(None, bytearray(data))
-            warm = len(seen)
-            continue
-        if i not in drop:
-            client._handle_notify(None, bytearray(data))
-    return seen[warm:], client.state
+    _notify(client, IDLE_CYCLE_93C, cycles=2)
+    seen.clear()
+    _notify(client, IDLE_CYCLE_93C, cycles=2, drop=drop)
+    return seen, client.state
 
 
 def test_intact_stream_decodes():
@@ -343,7 +338,7 @@ def test_lost_notifications_never_change_state():
     _, intact = _decoded(drop=())
     total = len(IDLE_CYCLE_93C) * 2
     for length in range(1, 5):
-        for start in range(total + 1, 2 * total):
+        for start in range(total):
             seen, state = _decoded(drop=range(start, start + length))
             assert seen == [] and state == intact, (start, length, seen)
 
@@ -368,36 +363,60 @@ def test_target_not_taken_from_hold_button_payload():
     assert seen == [] and state.fahrenheit is False and state.target_temp == 93
 
 
-def test_frame_waits_for_next_header():
+def test_frame_waits_for_the_next_frame():
     seen: list = []
     client = api.StaggClient(on_state=seen.append)
     client._handle_notify(None, bytearray.fromhex("efdd00"))
     client._handle_notify(None, bytearray.fromhex("010100"))
-    # A separator without the next frame's type yet: the frame is held back.
-    client._handle_notify(None, bytearray(api.FRAME_SEPARATOR))
+    client._handle_notify(None, bytearray.fromhex("efdd01"))
+    # The power frame is held until the frame after it is complete and turns
+    # out to be the next one in the cycle.
     assert seen == []
-    client._handle_notify(None, bytearray(b"\x01"))
+    client._handle_notify(None, bytearray.fromhex("010100"))
+    client._handle_notify(None, bytearray.fromhex("efdd06"))
     assert seen[-1].power is True
 
 
 @pytest.mark.parametrize(
-    ("frame_type", "payload", "next_type", "intact"),
+    ("frame_type", "payload", "next_type", "applied"),
     [
         (0x02, "5d005d00", 0x00, True),
-        (0x03, "53015301", 0x02, True),
-        (0x02, "5d005d00", 0x01, False),  # next frame missing
+        (0x02, "5d005d00", 0x01, False),  # the next frame is missing
         (0x03, "5d005d00", 0x00, False),  # target payload under current header
-        (0x02, "010100", 0x00, False),  # wrong length
-        (0x02, "5d005e00", 0x00, False),  # value not repeated
-        (0x02, "ffffffff", 0x00, False),  # not a unit
-        (0x04, "100e100e", 0x05, True),
-        (0x08, "010100", 0x04, True),
+        (0x02, "5d005d00", 0x0B, False),  # followed by an unknown frame type
+        (0x0B, "5d005d00", 0x04, False),  # unknown frame type
         (0x08, "09640202000f0100000c75", 0x04, False),  # auth echo
-        (0x0B, "00", 0x04, False),  # unknown frame type
     ],
 )
-def test_frame_is_intact(frame_type, payload, next_type, intact):
-    assert api.frame_is_intact(frame_type, bytes.fromhex(payload), next_type) is intact
+def test_frame_applied_only_when_followed_by_the_next_in_cycle(
+    frame_type, payload, next_type, applied
+):
+    seen: list = []
+    client = api.StaggClient(on_state=seen.append)
+    for data in (
+        api.FRAME_SEPARATOR + bytes([frame_type]),
+        bytes.fromhex(payload),
+        # The next frame, complete (closed by the header after it).
+        api.FRAME_SEPARATOR + bytes([next_type]),
+        bytes.fromhex("000000"),
+        api.FRAME_SEPARATOR + bytes([0x07]),
+    ):
+        client._handle_notify(None, bytearray(data))
+    assert bool(seen) is applied
+
+
+async def test_client_start_forgets_the_previous_session_frame():
+    from unittest.mock import AsyncMock
+
+    client = api.StaggClient()
+    for data in ("efdd03", "5d005d00", "efdd02"):
+        client._handle_notify(None, bytearray.fromhex(data))
+    await client.start(AsyncMock())
+    # The old session's held frame must not be applied by the new session's
+    # first frame, which happens to be the one that follows it in the cycle.
+    for data in ("efdd02", "5d005d00", "efdd00"):
+        client._handle_notify(None, bytearray.fromhex(data))
+    assert client.state.current_temp is None
 
 
 # --- StaggClient internals (no BLE connection) ------------------------------
@@ -416,7 +435,10 @@ def test_handle_notify_decodes_fragmented_frames():
     # actually sends it), closed by the next frame's header.
     client._handle_notify(None, bytearray.fromhex("efdd00"))
     client._handle_notify(None, bytearray.fromhex("010100"))
+    # Applied once the frame after it (the hold button) is complete.
     client._handle_notify(None, bytearray.fromhex("efdd01"))
+    client._handle_notify(None, bytearray.fromhex("010100"))
+    client._handle_notify(None, bytearray.fromhex("efdd06"))
     assert seen and seen[-1].power is True
 
 
