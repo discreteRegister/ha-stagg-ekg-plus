@@ -22,6 +22,7 @@ methods are patched where needed so no real timers linger.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +39,7 @@ from custom_components.stagg_ekg_plus.const import (
     CONNECTION_MODE_ON_DEMAND,
     CONNECTION_MODE_PERSISTENT,
     DOMAIN,
+    KEEP_ALIVE_TIMEOUT,
 )
 from custom_components.stagg_ekg_plus.coordinator import StaggCoordinator
 
@@ -118,7 +120,7 @@ def test_handle_state_clears_probe_when_powered_on(hass: HomeAssistant) -> None:
     coord._probe_started = 1.0
     with (
         patch.object(coord, "_cancel_idle_disconnect_timer") as cancel,
-        patch.object(coord, "_reset_keepalive"),
+        patch.object(coord, "_arm_keepalive"),
     ):
         coord._handle_state(KettleState(power=True))
     assert coord.data.power is True
@@ -130,11 +132,22 @@ def test_handle_state_off_schedules_idle(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
     with (
         patch.object(coord, "_schedule_idle_disconnect") as idle,
-        patch.object(coord, "_reset_keepalive"),
+        patch.object(coord, "_arm_keepalive"),
     ):
         coord._handle_state(KettleState(power=False))
     assert coord.data.power is False
     idle.assert_called_once()
+
+
+def test_handle_state_power_on_arms_keepalive_once(hass: HomeAssistant) -> None:
+    """On demand: the first power-on state starts the watchdog, later ones do not."""
+    coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord._client = MagicMock(is_connected=True)
+    with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
+        coord._handle_state(KettleState(power=True, current_temp=50))
+        coord._handle_state(KettleState(power=True, current_temp=51))
+        coord._handle_state(KettleState(power=True, current_temp=52))
+    later.assert_called_once()
 
 
 async def test_set_power_sends_command(hass: HomeAssistant) -> None:
@@ -212,18 +225,29 @@ def test_identical_frames_keep_persistent_link_alive(hass: HomeAssistant) -> Non
         patch.object(
             type(client), "is_connected", new_callable=lambda: property(lambda _: True)
         ),
-        patch(f"{_CO}.async_call_later") as call_later,
+        patch(f"{_CO}.async_call_later", return_value=MagicMock()) as call_later,
         patch.object(coord, "async_set_updated_data") as updated,
     ):
-        # An idle kettle repeats the same state frame about once a second; each
-        # one must rearm the watchdog even though the state never changes.
-        # Each frame is complete once the next frame's header arrives.
+        # The watchdog was armed on connect (persistent mode).
+        coord._cancel_keepalive = MagicMock()
+        # An idle kettle repeats the same state frame about once a second. The
+        # frames never touch a timer: they only stamp last_rx. Each frame is
+        # complete once the next frame's header arrives.
         for _ in range(3):
             client._handle_notify(None, bytearray.fromhex("efdd00"))
             client._handle_notify(None, bytearray.fromhex("000000"))
         client._handle_notify(None, bytearray(FRAME_SEPARATOR) + b"\x01")
-    assert call_later.call_count == 3
-    assert updated.call_count <= 1
+        assert call_later.call_count == 0
+        assert updated.call_count <= 1
+        # When the watchdog fires it finds recent data and keeps the link,
+        # checking again once the full timeout could have elapsed.
+        client.last_rx = time.monotonic() - 5.0
+        coord._keepalive_timer_fired(_now())
+    call_later.assert_called_once()
+    assert call_later.call_args.args[1] == pytest.approx(
+        KEEP_ALIVE_TIMEOUT - 5.0, abs=0.5
+    )
+    assert coord._stale_disconnect is False
 
 
 def test_on_disconnect_ignored_before_session(hass: HomeAssistant) -> None:
@@ -298,12 +322,12 @@ async def test_ensure_connected_success(hass: HomeAssistant) -> None:
         patch.object(coord, "_get_ble_device", return_value=MagicMock()),
         patch(f"{_CO}.establish_connection", AsyncMock(return_value=fake_client)),
         patch.object(coord._client, "start", AsyncMock()) as start,
-        patch.object(coord, "_reset_keepalive") as reset,
+        patch.object(coord, "_arm_keepalive") as arm,
         patch.object(coord, "async_update_listeners") as update,
     ):
         await coord._ensure_connected()
     start.assert_awaited_once_with(fake_client)
-    reset.assert_called_once()
+    arm.assert_called_once()
     update.assert_called_once()
     assert coord._connected_since is not None
 
@@ -338,7 +362,7 @@ async def test_ensure_connected_refreshes_device_on_retry(
         patch.object(coord, "_get_ble_device", side_effect=[initial, fresh, None]),
         patch(f"{_CO}.establish_connection", _establish),
         patch.object(coord._client, "start", AsyncMock()),
-        patch.object(coord, "_reset_keepalive"),
+        patch.object(coord, "_arm_keepalive"),
     ):
         await coord._ensure_connected()
         callback = captured["ble_device_callback"]
@@ -390,7 +414,9 @@ async def test_async_probe_reschedules_when_unreachable(hass: HomeAssistant) -> 
 
 def test_keepalive_timer_fired_drops_link(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
-    coord._client = MagicMock(is_connected=True)
+    coord._client = MagicMock(
+        is_connected=True, last_rx=time.monotonic() - KEEP_ALIVE_TIMEOUT
+    )
     with (
         patch.object(coord, "_async_disconnect", MagicMock(return_value=None)),
         patch.object(coord.config_entry, "async_create_background_task") as task,
@@ -398,6 +424,22 @@ def test_keepalive_timer_fired_drops_link(hass: HomeAssistant) -> None:
         coord._keepalive_timer_fired(_now())
     assert coord._stale_disconnect is True
     task.assert_called_once()
+
+
+def test_keepalive_timer_fired_rearms_for_the_remaining_window(
+    hass: HomeAssistant,
+) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = MagicMock(is_connected=True, last_rx=time.monotonic() - 12.0)
+    with (
+        patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later,
+        patch.object(coord.config_entry, "async_create_background_task") as task,
+    ):
+        coord._keepalive_timer_fired(_now())
+    task.assert_not_called()
+    assert coord._stale_disconnect is False
+    later.assert_called_once()
+    assert later.call_args.args[1] == pytest.approx(KEEP_ALIVE_TIMEOUT - 12.0, abs=0.5)
 
 
 def test_idle_disconnect_fired_drops_when_off(hass: HomeAssistant) -> None:
@@ -457,12 +499,25 @@ def test_schedule_poll_noop_when_disabled(hass: HomeAssistant) -> None:
     later.assert_not_called()
 
 
-def test_reset_keepalive_arms_when_connected(hass: HomeAssistant) -> None:
+def test_arm_keepalive_arms_when_connected(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
     coord._client = MagicMock(is_connected=True)
     with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
-        coord._reset_keepalive()
+        coord._arm_keepalive()
     later.assert_called_once()
+    assert later.call_args.args[1] == KEEP_ALIVE_TIMEOUT
+
+
+def test_arm_keepalive_noop_while_pending(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = MagicMock(is_connected=True)
+    pending = MagicMock()
+    coord._cancel_keepalive = pending
+    with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
+        coord._arm_keepalive()
+    later.assert_not_called()
+    pending.assert_not_called()
+    assert coord._cancel_keepalive is pending
 
 
 def test_arm_idle_after_command_on_demand_off(hass: HomeAssistant) -> None:
@@ -553,15 +608,13 @@ def test_schedule_reconnect_arms_with_backoff(hass: HomeAssistant) -> None:
     assert coord._reconnect_attempt == 1
 
 
-def test_reset_keepalive_cancels_when_not_wanted(hass: HomeAssistant) -> None:
+def test_arm_keepalive_noop_when_not_wanted(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)  # off -> not wanted
     coord._client = MagicMock(is_connected=True)
-    cancel = MagicMock()
-    coord._cancel_keepalive = cancel
     with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
-        coord._reset_keepalive()
-    cancel.assert_called_once()
+        coord._arm_keepalive()
     later.assert_not_called()
+    assert coord._cancel_keepalive is None
 
 
 def test_on_disconnect_stale_branch(hass: HomeAssistant) -> None:
@@ -739,7 +792,7 @@ def test_schedule_reconnect_backoff_escalates_and_caps(
 def test_keepalive_watchdog_to_reconnect_chain(hass: HomeAssistant) -> None:
     """The watchdog marks the link stale, drops it, and the drop reconnects."""
     coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
-    coord._client = MagicMock(is_connected=True)
+    coord._client = MagicMock(is_connected=True, last_rx=0.0)
     coord._connected_since = 1.0
 
     with (
