@@ -8,6 +8,24 @@ then. Do not edit the version in `manifest.json` by hand;
 merging the release PR bumps it, tags the release and publishes it. Releases up
 to 0.7.7 were made in [samwiseg0/ha-stagg-ekg-plus](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases).
 
+## 0.8.1 (2026-11-07)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Changes
+* ci: lint workflows with zizmor and actionlint by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/13
+* ci: scan the locked dependencies for known vulnerabilities by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/15
+* ci: check PR titles and commit messages follow Conventional Commits by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/14
+* ci: move the pull request check into its own workflow by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/17
+* build(deps): override Home Assistant's uv pin with 0.13.4 by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/18
+* fix: treat 0 C as the off reading in Celsius by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/19
+* refactor: drive the keep-alive watchdog from the last notification time by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/20
+* refactor(api): hold each frame until the next one proves it intact by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/21
+
+
+**Full Changelog**: https://github.com/discreteRegister/ha-stagg-ekg-plus/compare/v0.8.0...v0.8.1
+
 ## 0.8.0 (2026-11-02)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->
