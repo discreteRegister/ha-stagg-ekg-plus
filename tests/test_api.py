@@ -166,14 +166,20 @@ def test_apply_frame_current_temp_celsius():
     assert s.fahrenheit is False
 
 
-def test_apply_frame_current_temp_off_sentinel():
+@pytest.mark.parametrize(
+    ("payload", "current"),
+    [
+        ("2001", None),  # off in Fahrenheit: 32 F
+        ("0000", None),  # off in Celsius: 0 C (issue #46 capture)
+        ("2000", 32),  # a real 32 C while heating
+        ("0001", 0),
+    ],
+)
+def test_apply_frame_current_temp_off_reading(payload, current):
     s = api.apply_frame(
-        api.KettleState(),
-        api.STATE_CURRENT_TEMP,
-        bytes([api.CURRENT_TEMP_OFF_SENTINEL, 0x01]),
+        api.KettleState(), api.STATE_CURRENT_TEMP, bytes.fromhex(payload)
     )
-    assert s.current_temp is None
-    assert s.fahrenheit is True
+    assert s.current_temp == current
 
 
 def test_apply_frame_hold_mode():
@@ -318,7 +324,8 @@ def test_intact_stream_decodes():
     seen, state = _decoded(drop=())
     assert seen == []
     assert state.target_temp == 93
-    assert state.current_temp == 0
+    # 0 C is the off reading in Celsius (the capture is of an idle kettle).
+    assert state.current_temp is None
     assert state.fahrenheit is False
     assert state.power is False
     assert state.lifted is False
@@ -348,7 +355,7 @@ def test_current_temp_not_taken_from_target_payload():
         _index(IDLE_CYCLE_93C, 0x02),
     )
     seen, state = _decoded(drop)
-    assert seen == [] and state.current_temp == 0
+    assert seen == [] and state.current_temp is None
 
 
 def test_target_not_taken_from_hold_button_payload():
