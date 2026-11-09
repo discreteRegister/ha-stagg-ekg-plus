@@ -2490,15 +2490,15 @@ wheels = [
 
 [[package]]
 name = "serialx"
-version = "1.14.0"
+version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/46/a23c683d997c5d46f34e777abb7f4b0e41e189b115a9f6995812e404595c/serialx-1.14.0.tar.gz", hash = "sha256:508fbc83290b2c368cc3cc034bc2a30fa083d1bdcfae6755a1175f6ec14c8af1", size = 389862, upload-time = "2026-10-14T23:14:03.191Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/5f/d1496ad01c310ae573921ca24c62bfaad9ff34cf16c583f4ae85f39b77e9/serialx-1.15.0.tar.gz", hash = "sha256:89ffdae6511492157eb1e957f7f6cb0cacace088692f7477b27c4a6b6dbd4d6d", size = 391557, upload-time = "2026-10-22T20:16:16.258Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/e9/27727800c21dccc90cf605cd5ec68adefdf5d779cfe5bbe2391546ef45d0/serialx-1.14.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:90c38eddd655397842a8c3593e4cdb164ff7508bab3fb17e932188f8d0582b6f", size = 300969, upload-time = "2026-10-14T23:13:56.358Z" },
-    { url = "https://files.pythonhosted.org/packages/de/f9/7f8040d02baa571b166ac33699316d90ec542871897864b4e909bb7d52fa/serialx-1.14.0-py3-none-any.whl", hash = "sha256:3a88be02fd4318ee94fe2408edeb5322766c729a95dd318c366c0b8f7ece6338", size = 86247, upload-time = "2026-10-14T23:14:01.919Z" },
+    { url = "https://files.pythonhosted.org/packages/27/bd/d676e69539396e493d54f5670e0b9135b43b450e1380ff695fdd28c3419c/serialx-1.15.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:87fb762209fe7e7ee603c1c75dff6c249de71c600516c03f4bdd2a35431bc35c", size = 302289, upload-time = "2026-10-22T20:16:09.79Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/9e/d21caac4e6902e82f064515d563cb16fbc8bc3fa0a85e8ec2be23368865e/serialx-1.15.0-py3-none-any.whl", hash = "sha256:bede3cf4c2de6c42de4c126184b7ad746cc8e2e22a4b5fef7854ee6870f4e2ad", size = 87636, upload-time = "2026-10-22T20:16:14.887Z" },
 ]
 
 [[package]]
