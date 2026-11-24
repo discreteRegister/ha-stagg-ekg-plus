@@ -202,7 +202,10 @@ job runs `uv run --locked` against `uv.lock`).
   `AddConfigEntryEntitiesCallback`, frozen kw_only entity descriptions,
   `dr.CONNECTION_BLUETOOTH` for device connections.
 - Do not reintroduce a separate server/add-on; keep the single-integration design.
-- Workflows: pin every action to a full commit SHA with a `# vX.Y.Z` comment,
+- Workflows: pin every action to a full commit SHA with a comment naming the
+  upstream tag it matches, e.g. `# vX.Y.Z` (zizmor checks the comment against
+  the real tag, so use the upstream spelling: hassfest's tags are CalVer
+  `# 2026.11.0` with no `v`),
   give each job only the `permissions` it needs (top-level `permissions: {}`),
   check out with `persist-credentials: false`, and pass `${{ }}` values to
   `run:` blocks through `env:` rather than inline. The "Workflow security" job
