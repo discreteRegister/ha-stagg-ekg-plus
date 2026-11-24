@@ -138,7 +138,11 @@ class StaggClimate(StaggEntity, ClimateEntity):
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is None:
             return
-        await self.coordinator.async_set_target_temp(int(temperature))
+        # HA has already converted the value to this entity's unit, which is a
+        # guess until the kettle reports its own; the coordinator corrects it.
+        await self.coordinator.async_set_target_temp(
+            float(temperature), self._is_fahrenheit
+        )
 
     @override
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

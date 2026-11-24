@@ -22,9 +22,10 @@ import asyncio
 import contextlib
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
@@ -37,12 +38,21 @@ from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util.unit_conversion import TemperatureConverter
 
-from .api import KettleState, StaggClient
+from .api import (
+    TEMP_MAX_C,
+    TEMP_MAX_F,
+    TEMP_MIN_C,
+    TEMP_MIN_F,
+    KettleState,
+    StaggClient,
+)
 from .const import (
     CONF_CONNECTION_MODE,
     CONF_POLL_INTERVAL,
@@ -53,6 +63,8 @@ from .const import (
     KEEP_ALIVE_TIMEOUT,
     ON_DEMAND_DISCONNECT_DELAY,
     PROBE_DISCONNECT_DELAY,
+    REACHABLE_TIMEOUT,
+    UNIT_WAIT_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -108,10 +120,21 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
         self._stale_disconnect = False
         self._probing = False
         self._probe_started: float | None = None
+        # None until the kettle is heard or connected, or REACHABLE_TIMEOUT passes.
+        self.reachable: bool | None = None
+        # HA's clock, so these compare with its advertisement times.
+        self._started = bluetooth.MONOTONIC_TIME()
+        # When the last connection ended. HA stores the advertisement times.
+        self._last_seen: float | None = None
+        # Set once a frame has told us the kettle's display unit (F or C). A
+        # target temperature is a bare number in that unit, so a set waits for it.
+        self._unit_known = asyncio.Event()
 
     @callback
     def _handle_state(self, state: KettleState) -> None:
         self.async_set_updated_data(state)
+        if state.fahrenheit is not None:
+            self._unit_known.set()
         if self._on_demand:
             # On demand: hold the link while the kettle is doing something
             # (powered on), and let it go once it is off/idle.
@@ -162,25 +185,29 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
     def _wants_connection(self) -> bool:
         """Whether we want to hold an open connection right now.
 
-        Persistent mode always wants the link. On-demand mode wants it only
-        while the kettle is powered on, so live temperature streams while it is
-        heating/holding and the adapter is freed once it turns off.
+        Persistent mode always wants the link. On-demand mode wants it while
+        the kettle is powered on, so live temperature streams while it is
+        heating/holding and the adapter is freed once it turns off. It also
+        wants it before the first state frame (data is None, e.g. after a
+        restart whose first connect failed): until the kettle reports, we do
+        not know it is off, so the advertisement callback and the backoff loop
+        keep trying, as HA's setup retry did before on-demand setup stopped
+        raising. The first off frame then lets the link go.
         """
         if not self._on_demand:
             return True
-        return bool(self.data and self.data.power)
+        return self.data is None or bool(self.data.power)
 
     @property
     def available(self) -> bool:
         """Whether entities should report as available.
 
-        In on-demand mode the link is intentionally dropped while the kettle is
-        off, so availability follows whether we have any state rather than the
-        live connection. In persistent mode availability tracks the connection.
+        Persistent mode tracks the connection. On-demand mode drops the link
+        while the kettle is off, so entities stay available. They show the last
+        known state, or unknown before the first one. A command then connects
+        or raises not_reachable.
         """
-        if self._on_demand:
-            return self.data is not None
-        return self._client.is_connected
+        return self._on_demand or self._client.is_connected
 
     async def async_start(self) -> None:
         """Register for advertisements and open the initial connection."""
@@ -196,12 +223,28 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
         self.config_entry.async_on_unload(self._cancel_keepalive_timer)
         self.config_entry.async_on_unload(self._cancel_idle_disconnect_timer)
         self.config_entry.async_on_unload(self._cancel_poll_timer)
-        await self._ensure_connected()
-        if not self._client.is_connected and not self._on_demand:
-            # Not reachable yet; keep retrying in the background. In on-demand
-            # mode we instead wait for the next command to trigger a connect.
+        self.config_entry.async_on_unload(
+            async_track_time_interval(
+                self.hass, self._check_reachable, timedelta(minutes=1)
+            )
+        )
+        try:
+            await self._ensure_connected()
+        except (BleakError, TimeoutError) as err:
+            if not self._on_demand:
+                raise
+            # HA logs a failed setup only at INFO and creates no entities. On
+            # demand, keep the entry loaded so the Reachable sensor can report.
+            _LOGGER.warning(
+                "Could not connect to kettle %s at startup: %s", self.address, err
+            )
+        if self._client.is_connected:
+            return
+        if self._wants_connection():
+            # Not reachable yet; keep retrying in the background. This covers
+            # persistent mode and an on-demand start that never got a frame.
             self._schedule_reconnect()
-        elif not self._client.is_connected and self._on_demand:
+        else:
             # On demand and idle (kettle off): start the optional background
             # probe loop if the user enabled it.
             self._schedule_poll()
@@ -249,6 +292,7 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
             return
         held = _format_duration(time.monotonic() - self._connected_since)
         self._connected_since = None
+        self._last_seen = bluetooth.MONOTONIC_TIME()
         if self._stopping:
             return
         stale = self._stale_disconnect
@@ -291,6 +335,48 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
         # state change, while commands already fail as unreachable.
         self.async_update_listeners()
         self._schedule_reconnect()
+
+    @callback
+    def _set_reachable(self, reachable: bool) -> None:
+        """Record whether Home Assistant can reach the kettle. Log each change."""
+        if reachable == self.reachable:
+            return
+        was = self.reachable
+        self.reachable = reachable
+        if not reachable:
+            _LOGGER.warning(
+                "Kettle %s is unreachable. Home Assistant has not heard it over "
+                "Bluetooth for %s",
+                self.address,
+                _format_duration(REACHABLE_TIMEOUT),
+            )
+        elif was is False:
+            _LOGGER.info("Kettle %s is reachable again", self.address)
+        self.async_update_listeners()
+
+    @callback
+    def _check_reachable(self, _now: datetime | None = None) -> None:
+        """Mark the kettle reachable while connected or recently heard.
+
+        HA calls the advertisement callback only when the advertisement data
+        changes, so this reads the time of the last one HA stored instead.
+        """
+        if self._client.is_connected:
+            self._set_reachable(True)
+            return
+        now = bluetooth.MONOTONIC_TIME()
+        seen = self._last_seen
+        info = bluetooth.async_last_service_info(
+            self.hass, self.address, connectable=True
+        )
+        # At startup HA restores its Bluetooth cache stamped with the startup
+        # time. Only an advertisement received after setup shows the kettle is up.
+        if info is not None and info.time > self._started:
+            seen = info.time if seen is None else max(seen, info.time)
+        if seen is not None and now - seen < REACHABLE_TIMEOUT:
+            self._set_reachable(True)
+        elif now - self._started >= REACHABLE_TIMEOUT:
+            self._set_reachable(False)
 
     @callback
     def _arm_keepalive(self, delay: float = KEEP_ALIVE_TIMEOUT) -> None:
@@ -562,6 +648,7 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
             self._cancel_poll_timer()
             self._connected_since = time.monotonic()
             self._reconnect_attempt = 0
+            self._set_reachable(True)
             if self._on_demand:
                 self._schedule_idle_disconnect(
                     delay=(
@@ -570,8 +657,11 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
                         else ON_DEMAND_DISCONNECT_DELAY
                     )
                 )
-            else:
-                self._arm_keepalive()
+            # Persistent mode always wants the link; on demand, so does a
+            # connect before the first frame. A link that never delivers one
+            # would otherwise be held forever (the idle timer keeps it while
+            # the state is unknown). A no-op when the link is not wanted.
+            self._arm_keepalive()
             # The kettle's state is often unchanged across a reconnect, so no
             # state update would follow; tell the entities the link is back.
             self.async_update_listeners()
@@ -581,9 +671,36 @@ class StaggCoordinator(DataUpdateCoordinator[KettleState]):
         await self._client.set_power(on)
         self._arm_idle_disconnect_after_command()
 
-    async def async_set_target_temp(self, temp: int) -> None:
+    async def async_set_target_temp(self, temp: float, fahrenheit: bool) -> None:
+        """Set the target temperature; `temp` is in F when `fahrenheit`.
+
+        The kettle takes a bare number in its own display unit. Before the
+        first temperature frame the climate entity guesses the unit from HA's
+        settings, so wait for the kettle to report it and convert if the guess
+        was wrong. Raise not_reachable if it never reports.
+        """
         await self._ensure_command_connection()
-        await self._client.set_target_temp(temp)
+        try:
+            async with asyncio.timeout(UNIT_WAIT_TIMEOUT):
+                await self._unit_known.wait()
+        except TimeoutError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_reachable",
+                translation_placeholders={"address": self.address},
+            ) from err
+        assert self.data is not None and self.data.fahrenheit is not None
+        kettle_f = self.data.fahrenheit
+        if kettle_f != fahrenheit:
+            temp = TemperatureConverter.convert(
+                temp,
+                UnitOfTemperature.FAHRENHEIT
+                if fahrenheit
+                else UnitOfTemperature.CELSIUS,
+                UnitOfTemperature.FAHRENHEIT if kettle_f else UnitOfTemperature.CELSIUS,
+            )
+        low, high = (TEMP_MIN_F, TEMP_MAX_F) if kettle_f else (TEMP_MIN_C, TEMP_MAX_C)
+        await self._client.set_target_temp(min(max(round(temp), low), high))
         self._arm_idle_disconnect_after_command()
 
     @callback

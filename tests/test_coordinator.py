@@ -22,11 +22,13 @@ methods are patched where needed so no real timers linger.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from bleak.exc import BleakError
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -40,6 +42,7 @@ from custom_components.stagg_ekg_plus.const import (
     CONNECTION_MODE_PERSISTENT,
     DOMAIN,
     KEEP_ALIVE_TIMEOUT,
+    REACHABLE_TIMEOUT,
 )
 from custom_components.stagg_ekg_plus.coordinator import StaggCoordinator
 
@@ -75,7 +78,8 @@ def test_wants_connection_persistent(hass: HomeAssistant) -> None:
 
 def test_wants_connection_on_demand_follows_power(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
-    assert coord._wants_connection() is False  # no data yet
+    # Unknown state (no frame yet) wants a link, to learn whether it is on.
+    assert coord._wants_connection() is True
     coord.async_set_updated_data(KettleState(power=True))
     assert coord._wants_connection() is True
     coord.async_set_updated_data(KettleState(power=False))
@@ -90,10 +94,11 @@ def test_available_persistent_tracks_connection(hass: HomeAssistant) -> None:
     assert coord.available is True
 
 
-def test_available_on_demand_tracks_data(hass: HomeAssistant) -> None:
+def test_available_on_demand_without_data(hass: HomeAssistant) -> None:
+    # A tap must reach the command path, which connects or raises not_reachable.
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
-    assert coord.available is False
-    coord.async_set_updated_data(KettleState())
+    coord._client = MagicMock(is_connected=False)
+    assert coord.data is None
     assert coord.available is True
 
 
@@ -161,9 +166,62 @@ async def test_set_power_sends_command(hass: HomeAssistant) -> None:
 async def test_set_target_temp_sends_command(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
     coord._client = AsyncMock(is_connected=True)
+    coord.async_set_updated_data(KettleState(fahrenheit=True))
+    coord._unit_known.set()
     with patch.object(coord, "_ensure_connected", AsyncMock()):
-        await coord.async_set_target_temp(205)
-    coord._client.set_target_temp.assert_awaited_once_with(205)
+        await coord.async_set_target_temp(199.6, fahrenheit=True)
+    coord._client.set_target_temp.assert_awaited_once_with(200)
+
+
+async def test_set_target_temp_converts_to_kettle_unit(hass: HomeAssistant) -> None:
+    # HA guessed Fahrenheit before the first frame; the kettle is in Celsius.
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = AsyncMock(is_connected=True)
+    coord._arm_keepalive = MagicMock()
+    coord._handle_state(KettleState(fahrenheit=False))
+    with patch.object(coord, "_ensure_connected", AsyncMock()):
+        await coord.async_set_target_temp(200, fahrenheit=True)
+        await coord.async_set_target_temp(212, fahrenheit=True)
+    assert [c.args[0] for c in coord._client.set_target_temp.await_args_list] == [
+        93,
+        100,
+    ]
+
+
+async def test_set_target_temp_clamps_to_kettle_range(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = AsyncMock(is_connected=True)
+    coord._arm_keepalive = MagicMock()
+    coord._handle_state(KettleState(fahrenheit=True))
+    with patch.object(coord, "_ensure_connected", AsyncMock()):
+        await coord.async_set_target_temp(39, fahrenheit=False)  # 102.2F
+    coord._client.set_target_temp.assert_awaited_once_with(104)
+
+
+async def test_set_target_temp_waits_for_unit(hass: HomeAssistant) -> None:
+    # Right after a command connect no frame has arrived yet.
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = AsyncMock(is_connected=True)
+    coord._arm_keepalive = MagicMock()
+
+    async def connect() -> None:
+        hass.loop.call_soon(coord._handle_state, KettleState(fahrenheit=False))
+
+    with patch.object(coord, "_ensure_connected", AsyncMock(side_effect=connect)):
+        await coord.async_set_target_temp(90, fahrenheit=False)
+    coord._client.set_target_temp.assert_awaited_once_with(90)
+
+
+async def test_set_target_temp_raises_without_unit(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = AsyncMock(is_connected=True)
+    with (
+        patch.object(coord, "_ensure_connected", AsyncMock()),
+        patch(f"{_CO}.UNIT_WAIT_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coord.async_set_target_temp(90, fahrenheit=False)
+    coord._client.set_target_temp.assert_not_awaited()
 
 
 async def test_command_raises_translatable_error(hass: HomeAssistant) -> None:
@@ -179,6 +237,7 @@ async def test_command_raises_translatable_error(hass: HomeAssistant) -> None:
 
 def test_on_disconnect_intentional_when_off(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._connected_since = 1.0
     coord._probing = True
     with (
@@ -289,7 +348,17 @@ async def test_async_start_on_demand_schedules_poll(hass: HomeAssistant) -> None
     coord._client = MagicMock(is_connected=False)
     with (
         patch(f"{_BT}.async_register_callback", return_value=MagicMock()),
-        patch.object(coord, "_ensure_connected", AsyncMock()),
+        patch(f"{_CO}.async_track_time_interval", return_value=MagicMock()),
+        patch.object(
+            coord,
+            "_ensure_connected",
+            # Connected, read an off frame, and the idle timer dropped the link.
+            AsyncMock(
+                side_effect=lambda: coord.async_set_updated_data(
+                    KettleState(power=False)
+                )
+            ),
+        ),
         patch.object(coord, "_schedule_poll") as poll,
     ):
         await coord.async_start()
@@ -328,8 +397,9 @@ async def test_ensure_connected_success(hass: HomeAssistant) -> None:
         await coord._ensure_connected()
     start.assert_awaited_once_with(fake_client)
     arm.assert_called_once()
-    update.assert_called_once()
+    update.assert_called()
     assert coord._connected_since is not None
+    assert coord.reachable is True
 
 
 async def test_ensure_connected_no_device(hass: HomeAssistant) -> None:
@@ -444,6 +514,7 @@ def test_keepalive_timer_fired_rearms_for_the_remaining_window(
 
 def test_idle_disconnect_fired_drops_when_off(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._client = MagicMock(is_connected=True)
     with (
         patch.object(coord, "_async_disconnect", MagicMock(return_value=None)),
@@ -466,6 +537,7 @@ def test_reconnect_timer_fired_triggers_reconnect(hass: HomeAssistant) -> None:
 
 def test_poll_timer_fired_triggers_probe(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND, poll="120")
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._client = MagicMock(is_connected=False)
     with (
         patch.object(coord, "_async_probe", MagicMock(return_value=None)),
@@ -485,6 +557,7 @@ def test_schedule_idle_disconnect_arms(hass: HomeAssistant) -> None:
 
 def test_schedule_poll_arms_when_enabled(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND, poll="120")
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._client = MagicMock(is_connected=False)
     with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
         coord._schedule_poll()
@@ -522,6 +595,7 @@ def test_arm_keepalive_noop_while_pending(hass: HomeAssistant) -> None:
 
 def test_arm_idle_after_command_on_demand_off(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     with patch.object(coord, "_schedule_idle_disconnect") as idle:
         coord._arm_idle_disconnect_after_command()
     idle.assert_called_once()
@@ -610,6 +684,7 @@ def test_schedule_reconnect_arms_with_backoff(hass: HomeAssistant) -> None:
 
 def test_arm_keepalive_noop_when_not_wanted(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)  # off -> not wanted
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._client = MagicMock(is_connected=True)
     with patch(f"{_CO}.async_call_later", return_value=MagicMock()) as later:
         coord._arm_keepalive()
@@ -654,6 +729,7 @@ async def test_async_start_persistent_schedules_reconnect(
     coord._client = MagicMock(is_connected=False)
     with (
         patch(f"{_BT}.async_register_callback", return_value=MagicMock()),
+        patch(f"{_CO}.async_track_time_interval", return_value=MagicMock()),
         patch.object(coord, "_ensure_connected", AsyncMock()),
         patch.object(coord, "_schedule_reconnect") as reconnect,
     ):
@@ -684,6 +760,7 @@ def test_on_disconnect_intentional_when_off_not_probe(
     hass: HomeAssistant,
 ) -> None:
     coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord.async_set_updated_data(KettleState(power=False))  # known off
     coord._connected_since = 1.0
     coord._probing = False
     with (
@@ -809,3 +886,176 @@ def test_keepalive_watchdog_to_reconnect_chain(hass: HomeAssistant) -> None:
         coord._on_disconnect(MagicMock())
     reconnect.assert_called_once()
     assert coord._stale_disconnect is False
+
+
+async def test_async_start_on_demand_survives_connect_failure(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A cached but silent kettle must not fail setup, or no entities exist.
+    coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND, poll="120")
+    coord._client = MagicMock(is_connected=False)
+    with (
+        patch(f"{_BT}.async_register_callback", return_value=MagicMock()),
+        patch(f"{_CO}.async_track_time_interval", return_value=MagicMock()),
+        patch.object(
+            coord, "_ensure_connected", AsyncMock(side_effect=BleakError("gone"))
+        ),
+        patch.object(coord, "_schedule_poll") as poll,
+        patch.object(coord, "_schedule_reconnect") as reconnect,
+    ):
+        await coord.async_start()
+    # Nothing is known about the kettle yet, so keep retrying like HA's setup
+    # retry did, instead of waiting for a command or the optional poll.
+    reconnect.assert_called_once()
+    poll.assert_not_called()
+    assert "Could not connect to kettle" in caplog.text
+
+
+async def test_async_start_persistent_raises_connect_failure(
+    hass: HomeAssistant,
+) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_PERSISTENT)
+    coord._client = MagicMock(is_connected=False)
+    with (
+        patch(f"{_BT}.async_register_callback", return_value=MagicMock()),
+        patch(f"{_CO}.async_track_time_interval", return_value=MagicMock()),
+        patch.object(coord, "_ensure_connected", AsyncMock(side_effect=TimeoutError)),
+        pytest.raises(TimeoutError),
+    ):
+        await coord.async_start()
+
+
+def test_reachable_off_after_timeout_without_evidence(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    coord = _coordinator(hass)
+    coord._started = 1000.0  # exact float math against REACHABLE_TIMEOUT
+    coord._client = MagicMock(is_connected=False)
+    with (
+        patch(f"{_BT}.async_last_service_info", return_value=None),
+        patch(f"{_BT}.MONOTONIC_TIME") as clock,
+    ):
+        clock.return_value = coord._started + REACHABLE_TIMEOUT - 1
+        coord._check_reachable()
+        assert coord.reachable is None
+        clock.return_value = coord._started + REACHABLE_TIMEOUT
+        coord._check_reachable()
+        coord._check_reachable()
+    assert coord.reachable is False
+    assert caplog.text.count("is unreachable") == 1
+
+
+def test_reachable_ignores_advertisement_cached_before_start(
+    hass: HomeAssistant,
+) -> None:
+    # HA replays its cached advertisement at registration, stamped before start.
+    coord = _coordinator(hass)
+    coord._started = 1000.0  # exact float math against REACHABLE_TIMEOUT
+    coord._client = MagicMock(is_connected=False)
+    cached = MagicMock(time=coord._started - 1)
+    with (
+        patch(f"{_BT}.async_last_service_info", return_value=cached),
+        patch(f"{_BT}.MONOTONIC_TIME") as clock,
+    ):
+        clock.return_value = coord._started + REACHABLE_TIMEOUT
+        coord._check_reachable()
+    assert coord.reachable is False
+
+
+def test_reachable_recovers_from_stored_advertisement(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    # HA skips the callback for an unchanged advertisement but stores its time.
+    caplog.set_level(logging.INFO, logger=_CO)
+    coord = _coordinator(hass)
+    coord._started = 1000.0  # exact float math against REACHABLE_TIMEOUT
+    coord._client = MagicMock(is_connected=False)
+    heard = MagicMock(time=coord._started + 1)
+    with (
+        patch(f"{_BT}.async_last_service_info", return_value=heard),
+        patch(f"{_BT}.MONOTONIC_TIME") as clock,
+    ):
+        clock.return_value = heard.time + 1
+        coord._check_reachable()
+        assert coord.reachable is True
+        clock.return_value = heard.time + REACHABLE_TIMEOUT
+        coord._check_reachable()
+        assert coord.reachable is False
+        heard.time = clock.return_value + 1
+        clock.return_value += 2
+        coord._check_reachable()
+    assert coord.reachable is True
+    assert caplog.text.count("is reachable again") == 1
+
+
+def test_reachable_times_out_after_disconnect(hass: HomeAssistant) -> None:
+    # A kettle that freezes after a session never advertises again.
+    coord = _coordinator(hass)
+    coord.async_set_updated_data(KettleState(power=False))  # known off
+    coord._started = 1000.0  # exact float math against REACHABLE_TIMEOUT
+    coord._client = MagicMock(is_connected=True)
+    coord._check_reachable()
+    assert coord.reachable is True
+    coord._client = MagicMock(is_connected=False)
+    coord._connected_since = time.monotonic()
+    with patch(f"{_BT}.MONOTONIC_TIME") as clock, patch.object(coord, "_schedule_poll"):
+        clock.return_value = coord._started + 1000
+        coord._on_disconnect(MagicMock())
+    assert coord._last_seen == coord._started + 1000
+    with (
+        patch(f"{_BT}.async_last_service_info", return_value=None),
+        patch(f"{_BT}.MONOTONIC_TIME") as clock,
+    ):
+        clock.return_value = coord._last_seen + REACHABLE_TIMEOUT - 1
+        coord._check_reachable()
+        assert coord.reachable is True
+        clock.return_value = coord._last_seen + REACHABLE_TIMEOUT
+        coord._check_reachable()
+    assert coord.reachable is False
+
+
+async def test_ensure_connected_on_demand_unknown_arms_keepalive(
+    hass: HomeAssistant,
+) -> None:
+    # Before the first frame the idle timer keeps the link, so a link that
+    # never delivers a frame needs the watchdog to drop it.
+    coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    fake_client = MagicMock()
+    with (
+        patch.object(coord, "_get_ble_device", return_value=MagicMock()),
+        patch(f"{_CO}.establish_connection", AsyncMock(return_value=fake_client)),
+        patch.object(coord._client, "start", AsyncMock()),
+        patch.object(coord, "_schedule_idle_disconnect"),
+        patch.object(coord, "_arm_keepalive") as arm,
+    ):
+        await coord._ensure_connected()
+    arm.assert_called_once()
+    assert coord._wants_connection() is True  # so the watchdog really arms
+
+
+def test_advertisement_connects_on_demand_before_first_frame(
+    hass: HomeAssistant,
+) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND)
+    coord._client = MagicMock(is_connected=False)
+    with (
+        patch.object(coord, "_async_reconnect", MagicMock(return_value=None)),
+        patch.object(coord.config_entry, "async_create_background_task") as task,
+    ):
+        coord._on_bluetooth_event(MagicMock(), MagicMock())
+    task.assert_called_once()
+
+
+async def test_async_start_connected_schedules_nothing(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, mode=CONNECTION_MODE_ON_DEMAND, poll="120")
+    coord._client = MagicMock(is_connected=True)
+    with (
+        patch(f"{_BT}.async_register_callback", return_value=MagicMock()),
+        patch(f"{_CO}.async_track_time_interval", return_value=MagicMock()),
+        patch.object(coord, "_ensure_connected", AsyncMock()),
+        patch.object(coord, "_schedule_poll") as poll,
+        patch.object(coord, "_schedule_reconnect") as reconnect,
+    ):
+        await coord.async_start()
+    poll.assert_not_called()
+    reconnect.assert_not_called()

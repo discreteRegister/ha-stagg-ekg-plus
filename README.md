@@ -106,7 +106,7 @@ The kettle is discovered automatically once it is powered and in range. You will
 
 Go to **Settings -> Devices & Services -> Fellow Stagg EKG+ -> Configure** to choose how Home Assistant talks to the kettle:
 
-- **On demand (default):** connects when you send a command and stays connected while the kettle is **powered on**, so temperature streams live while it heats and holds. It disconnects a few seconds after the kettle turns off to free the Bluetooth adapter; entities then show the last known state.
+- **On demand (default):** connects when you send a command and stays connected while the kettle is **powered on**, so temperature streams live while it heats and holds. It disconnects a few seconds after the kettle turns off to free the Bluetooth adapter; entities then show the last known state. After a Home Assistant restart they show unknown until the kettle first reports; Home Assistant keeps trying to connect until it does. A command still works then. It connects, or shows a "not reachable" error.
 - **Persistent:** keeps one Bluetooth connection open at all times for always-live state and instant commands. A keep-alive watchdog reconnects automatically if the link goes quiet.
 
 On demand shares the adapter more politely and is the default; choose persistent for always-live state or the fastest control while the kettle is off.
@@ -130,6 +130,7 @@ A shorter interval notices a physical power-on sooner but uses the adapter more 
 | On base | `binary_sensor` | On when seated on the base |
 | Hold enabled | `binary_sensor` | Physical hold-slider position (disabled by default) |
 | Signal strength | `sensor` | Bluetooth RSSI, diagnostic (disabled by default) |
+| Reachable | `binary_sensor` | Off after 5 to 6 minutes with no Bluetooth contact, diagnostic. Unknown for up to 6 minutes after a restart |
 
 ## How data is updated
 
@@ -155,6 +156,9 @@ reconnects to learn whether the kettle has been switched on.
 
 ## Troubleshooting
 
+- **Reachable is off:** Home Assistant has not heard the kettle over Bluetooth
+  for about 5 minutes, and the log has a warning. Check that the kettle has power and
+  is in range. If it stays off, power cycle the kettle.
 - **Entities show unavailable / cannot connect:** make sure nothing else is
   connected to the kettle, and that it is within range of a Bluetooth adapter or
   ESPHome proxy. Bluetooth allows only one connection at a time.
@@ -181,6 +185,21 @@ automation:
       - action: notify.notify
         data:
           message: "The kettle has reached temperature."
+```
+
+Notify when Home Assistant loses contact with the kettle:
+
+```yaml
+automation:
+  - alias: Kettle unreachable
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.fellow_stagg_ekg_plus_reachable
+        to: "off"
+    actions:
+      - action: notify.notify
+        data:
+          message: "The kettle is not reachable over Bluetooth. Try a power cycle."
 ```
 
 ## Blueprints

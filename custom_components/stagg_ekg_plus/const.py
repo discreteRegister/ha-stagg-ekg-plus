@@ -56,3 +56,12 @@ POLL_INTERVAL_OPTIONS = ("0", "60", "120", "300")
 # than the kettle's ~1s state-frame cadence; too short would disconnect a
 # powered-on kettle before its first frame arrives and miss the power-on.
 PROBE_DISCONNECT_DELAY = 5.0
+
+# Reachable sensor: it turns off when Home Assistant has neither heard an
+# advertisement from the kettle nor held a connection for this many seconds.
+REACHABLE_TIMEOUT = 300.0
+
+# How long a target-temperature command waits after connecting for the first
+# frame that tells us the kettle's unit (F or C). Frames arrive about every
+# second, so this matches PROBE_DISCONNECT_DELAY.
+UNIT_WAIT_TIMEOUT = 5.0

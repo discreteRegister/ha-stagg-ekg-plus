@@ -26,7 +26,7 @@ custom_components/stagg_ekg_plus/
   climate.py         # target temp + heat/off; follows kettle F/C unit
   switch.py          # power
   sensor.py          # current temp (None when off), target temp, auto-off timer, rssi (diag, opt-in)
-  binary_sensor.py   # holding (0x06), on-base (0x08), hold-enabled (0x01, opt-in)
+  binary_sensor.py   # holding (0x06), on-base (0x08), hold-enabled (0x01, opt-in), reachable (diag)
   strings.json, translations/en.json
   brand/             # bundled icon.png + logo.png + dark_logo.png (HA 2026.3+ local brand images)
 hacs.json
@@ -60,8 +60,14 @@ tools/probe.py       # standalone connect/auth/notify decoder (calibration)
   `async_reload(entry_id)`, so the coordinator is rebuilt with the new mode.
 - A single predicate `StaggCoordinator._wants_connection()` gates all
   connection-holding behavior (advertisement auto-connect, backoff reconnect,
-  keep-alive). Persistent: always True. On-demand: True only while
-  `self.data.power` (kettle on).
+  keep-alive). Persistent: always True. On-demand: True while
+  `self.data.power` (kettle on) AND while `self.data is None` (no frame yet,
+  e.g. a restart whose first connect failed). Unknown state is treated as
+  "find out": the advertisement callback and the backoff loop keep connecting
+  until the first frame, as HA's `ConfigEntryNotReady` retry did before on-demand
+  setup stopped raising. `_ensure_connected` arms the keep-alive in both modes
+  (a no-op when not wanted) so a connect that never yields a frame is dropped
+  rather than held by the idle timer forever.
 - **Keep-alive watchdog** (`KEEP_ALIVE_TIMEOUT`, 20s): a deadline timer that is
   never rearmed from the data path (the pattern of habluetooth's scanner
   watchdog). Every notification only stamps `StaggClient.last_rx`
@@ -99,9 +105,49 @@ tools/probe.py       # standalone connect/auth/notify decoder (calibration)
   physical power-on (advert carries no state) without persistent mode. No effect
   in persistent mode.
 - Entity availability: `coordinator.available` = `is_connected` in persistent
-  mode, but `data is not None` in on-demand (entities keep showing last-known
-  state while the link is intentionally dropped). `entity.py` uses
+  mode, and always True in on-demand. On demand, entities show the last-known
+  state, or unknown before the first frame. A command then connects or raises
+  `not_reachable`. With `data is not None` instead, HA rejected every tap after
+  a restart and never called the integration. `entity.py` uses
   `super().available and self.coordinator.available`.
+
+## Reachable sensor
+
+- `StaggCoordinator.reachable`: None after setup, True while connected or
+  recently heard, False after `REACHABLE_TIMEOUT` (300s) with neither.
+  `_set_reachable` logs one WARNING on each change to False and one INFO on
+  recovery. `StaggReachableSensor` (connectivity, diagnostic) shows it and stays
+  available in every mode.
+- `_check_reachable` runs every minute. It reads the time of the last
+  advertisement HA stored (`async_last_service_info(...).time`) and the end of
+  the last connection (`_last_seen`). HA calls the advertisement callback only
+  when the data changes, so the callback alone cannot show the kettle is alive.
+- Only advertisements stamped after `_started` count. At startup HA restores its
+  Bluetooth cache with the startup time, so a dead kettle would otherwise look
+  alive. All reachability times use `bluetooth.MONOTONIC_TIME`, HA's clock.
+- An idle kettle on the base advertised about 11 times a second, with a largest
+  gap of 8s during a poll connect (2026-11-09, local adapter). The 300s window
+  is far above that. Rechecked 2026-11-24 on a second install: switched off, on
+  demand, the stored advertisement (`bluetooth/subscribe_advertisements`
+  snapshot, local adapter) was never older than 10.5s over 2 minutes. While
+  connected the kettle does not advertise, so the stored time is the connect
+  time; `_check_reachable` covers that with `is_connected`.
+- On demand, a `BleakError` or `TimeoutError` from the first connect in
+  `async_start` logs one WARNING and setup continues. HA logs a failed setup
+  only at INFO and creates no entities. Persistent mode still raises. On
+  demand, the unknown state then keeps the reconnect loop running (see
+  `_wants_connection`), so a kettle that was on at restart still streams.
+- The check runs once a minute, so Reachable turns off 5 to 6 minutes after the
+  last contact. An options change reloads the entry and resets it to unknown.
+- Target temperature is a bare number in the kettle's own unit. Before the first
+  frame the climate entity uses HA's unit as a guess, so
+  `async_set_target_temp(temp, fahrenheit)` connects, waits up to
+  `UNIT_WAIT_TIMEOUT` (5s) for a frame with the unit (`_unit_known`), converts
+  if the guess was wrong, clamps to the kettle's range, and raises
+  `not_reachable` if no unit arrives.
+- `manifest.json` `loggers` lists only `bleak_retry_connector`. With `bleak`
+  listed, Enable debug logging wrote 34,958 BlueZ RSSI lines in 5 minutes
+  (2026-11-09).
 
 ## Bluetooth / kettle protocol facts (verified against real hardware)
 
