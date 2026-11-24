@@ -35,6 +35,7 @@ from custom_components.stagg_ekg_plus.api import KettleState
 from custom_components.stagg_ekg_plus.binary_sensor import (
     BINARY_SENSORS,
     StaggBinarySensor,
+    StaggReachableSensor,
 )
 from custom_components.stagg_ekg_plus.climate import StaggClimate
 from custom_components.stagg_ekg_plus.const import DOMAIN
@@ -143,15 +144,19 @@ async def test_climate_set_temperature(hass: HomeAssistant) -> None:
     climate = StaggClimate(coord)
     with patch.object(coord, "async_set_target_temp", AsyncMock()) as set_temp:
         await climate.async_set_temperature(**{ATTR_TEMPERATURE: 205})
-    set_temp.assert_awaited_once_with(205)
+    set_temp.assert_awaited_once_with(205.0, True)
 
 
-async def test_climate_set_temperature_truncates_float(hass: HomeAssistant) -> None:
-    coord = _coordinator(hass, KettleState(power=True, fahrenheit=True))
+async def test_climate_set_temperature_passes_guessed_unit(
+    hass: HomeAssistant,
+) -> None:
+    # No frame yet: the unit is HA's guess (metric here), passed along so the
+    # coordinator can convert once the kettle reports its own.
+    coord = _coordinator(hass, None)
     climate = StaggClimate(coord)
     with patch.object(coord, "async_set_target_temp", AsyncMock()) as set_temp:
-        await climate.async_set_temperature(**{ATTR_TEMPERATURE: 199.8})
-    set_temp.assert_awaited_once_with(199)
+        await climate.async_set_temperature(**{ATTR_TEMPERATURE: 93.5})
+    set_temp.assert_awaited_once_with(93.5, False)
 
 
 async def test_climate_set_temperature_noop_without_value(hass: HomeAssistant) -> None:
@@ -316,3 +321,22 @@ def test_binary_sensor_on_base_unknown_when_lifted_none(hass: HomeAssistant) -> 
 def test_binary_sensor_no_data_returns_none(hass: HomeAssistant) -> None:
     coord = _coordinator(hass, None)
     assert StaggBinarySensor(coord, _binary_desc("hold")).is_on is None
+
+
+def test_on_demand_switch_available_without_data(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, None)
+    switch = StaggPowerSwitch(coord)
+    assert switch.available is True
+    assert switch.is_on is None
+
+
+def test_reachable_sensor_stays_available(hass: HomeAssistant) -> None:
+    coord = _coordinator(hass, None)
+    coord._on_demand = False  # persistent and disconnected
+    sensor = StaggReachableSensor(coord)
+    assert coord.available is False
+    assert sensor.available is True
+    assert sensor.unique_id == f"{ADDRESS}_reachable"
+    assert sensor.is_on is None  # unknown until the kettle is heard or connected
+    coord.reachable = True
+    assert sensor.is_on is True
