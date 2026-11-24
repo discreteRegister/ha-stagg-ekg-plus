@@ -8,6 +8,31 @@ then. Do not edit the version in `manifest.json` by hand;
 merging the release PR bumps it, tags the release and publishes it. Releases up
 to 0.7.7 were made in [samwiseg0/ha-stagg-ekg-plus](https://github.com/samwiseg0/ha-stagg-ekg-plus/releases).
 
+## 0.8.2 (2026-11-24)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Changes
+* ci: pin hassfest to the 2026.11.0 release by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/38
+* fix: keep on-demand entities available after a restart and add a Reachable sensor by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/39
+* ci: skip push runs on merge queue branches by @digitalresistor in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/40
+### Dependencies
+* ci: bump github/codeql-action/upload-sarif from 4.39.0 to 4.39.1 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/23
+* ci: bump pytest-homeassistant-custom-component from 0.13.373 to 0.13.375 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/27
+* ci: bump astral-sh/setup-uv from 10.3.0 to 10.3.3 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/28
+* ci: bump mypy from 2.4.0 to 2.4.1 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/32
+* ci: bump serialx from 1.14.0 to 1.15.1 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/30
+* ci: bump aioesphomeapi from 46.14.0 to 46.25.1 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/29
+* ci: bump ruff from 0.17.1 to 0.17.3 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/31
+* ci: bump bleak from 3.0.2 to 3.1.0 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/37
+* ci: bump github/codeql-action/upload-sarif from 4.39.1 to 4.39.3 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/34
+* ci: bump zizmor from 1.31.1 to 1.32.0 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/36
+* ci: bump ruff from 0.17.3 to 0.17.4 by @dependabot[bot] in https://github.com/discreteRegister/ha-stagg-ekg-plus/pull/35
+
+
+**Full Changelog**: https://github.com/discreteRegister/ha-stagg-ekg-plus/compare/v0.8.1...v0.8.2
+
 ## 0.8.1 (2026-11-07)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->

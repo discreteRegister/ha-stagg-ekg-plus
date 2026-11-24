@@ -23,5 +23,5 @@
   "loggers": [
     "bleak_retry_connector"
   ],
-  "version": "0.8.1"
+  "version": "0.8.2"
 }
