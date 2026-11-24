@@ -2,6 +2,12 @@ name: Validate
 
 on:
   push:
+    # The merge queue's temporary branches are covered by merge_group. A second
+    # push run on the same commit also reports "CI passed", and if it fails
+    # (e.g. a transient HACS error) the queue drops the PR even though the
+    # merge_group run passed.
+    branches-ignore:
+      - "gh-readonly-queue/**"
   pull_request:
   # The merge queue on main tests each PR merged onto the latest main before it
   # lands, and waits for the required "CI passed" check on that merge group.
